@@ -1,6 +1,7 @@
 # Build artifacts
 /build/
 /compile_commands.json
+/lock
 
 # Encrypted test outputs (any local .locked file)
 *.locked
