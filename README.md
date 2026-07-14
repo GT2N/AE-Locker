@@ -61,6 +61,30 @@ cmake --build build          # 增量编译
 ./build/lock encrypt a.txt b.txt c.txt -j 8
 ```
 
+## 批量目录加密/解密（`--auto`)
+
+`--auto <dir>` 进入批量模式：递归扫描指定目录中的所有常规文件,镜像源目录的子目录结构落到 `-o/--output-dir` 下,避免不同子目录中同名文件冲突。
+
+```bash
+# 递归加密 ./secrets 下所有文件到 ./encrypted,镜像源目录结构
+./build/lock encrypt --auto ./secrets --max-depth 3 -o ./encrypted
+
+# 递归解密:扫描 ./encrypted/*.locked 用 header 中还原的文件名输出到 ./decrypted,
+# 子目录结构镜像到 ./decrypted下
+./build/lock decrypt --auto ./encrypted -o ./decrypted
+```
+
+约定：
+
+- `--auto <dir>`:递归扫描该目录。`-o/--output-dir` **必须**显式给出,作为镜像源子目录结构的输出根。
+- `--max-depth <N>`:递归深度控制。`-1` = 不限(默认);`0` = 仅 `--auto` 给的目录内的直系文件;`1` = 当前层 + 一层子目录;依此类推。
+- encrypt:跳过 `.locked` 结尾的文件(防止二次加密自己的产物);只对常规文件处理。
+- decrypt:只处理 `.locked` 结尾的常规文件,从 header 还原原始文件名作为输出文件名。
+- 跳过 symlink(防止 cycle 攻击);跳过非常规文件(socket/device/fifo)。
+- 输出现在用 `[源相对路径].locked` (encrypt)  / `[源相对子目录]/[header 还原文体名]` (decrypt) 落地 `-o`,与单文件模式同样遵循"存在即拒"(不覆盖已有产物)。
+- `--auto` 与位置文件参数互斥,二者只能给其一;`--max-depth` 单独给出(没有 `--auto`)会报错。
+- 空(无可加密/解密的文件)目录会以"no eligible files found"报错(非静默成功)。
+
 ## 三种 CLI 调用方式
 
 | 方式 | 命令 |
