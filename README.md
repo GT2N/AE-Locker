@@ -1,11 +1,12 @@
 # lock
 
-`lock` 是一个用 C++20 编写的命令行文件加密工具，使用 **AES-256-CTR** 对文件内容做多线程并行加密，使用 **AES-256-GCM** 对原始文件名加密（使其在加密后不可见），并以 **HMAC-SHA256** 对整个文件做完整性认证。密钥通过 **scrypt** KDF 从用户口令派生。
+`lock` 是一个用 C++20 编写的命令行文件加密工具，使用 **AES-256-CTR** 对文件内容做多线程并行加密，使用 **AES-256-GCM** 对原始文件名加密（使其在加密后不可见），并以 **HMAC-SHA256** 对整个文件做完整性认证。密钥通过 **scrypt** KDF 从用户口令派生。支持可选的 **LZ4 / zstd** 压缩-后-加密(compress-then-encrypt):通过 `--compress` / `-z` / `--fast` 在加密前对每个 chunk 独立压缩,解密时自动识别压缩算法并还原。
 
 构建工具链：**Clang + LLD + ThinLTO + Ninja + CMake**。
 
 ## 特性
 
+- **可选压缩**:加密前对每个 chunk 独立做 LZ4 或 zstd 压缩;压缩与加密均在 worker 线程中并行执行;解密时根据 header 自动选择解压算法(v1 文件保持原样可读)
 - **AES-256-CTR** 批量加密，可并行化（每 chunk 独立 IV）
 - **AES-256-GCM** 仅用于文件名加密（小数据带认证）
 - **scrypt** KDF 从口令派生 64 字节密钥材料：32 字节 `file_key` + 32 字节 `hmac_key`
@@ -26,6 +27,7 @@
 - **Ninja**
 - **CMake 3.16+**
 - **OpenSSL 3.x**（提供 `EVP_KDF_scrypt`、`EVP_MAC`）
+- **LZ4 v1.9.4** 和 **zstd v1.5.7** 通过 CMake FetchContent 自动下载构建(无需系统预装);首次 `cmake --preset default` 会从 GitHub 拉取
 
 ```bash
 cmake --preset default       # 一次性配置（首跑会 FetchContent 拉取 indicators）
@@ -94,6 +96,10 @@ Options:
   -j, --jobs <N>               每文件 worker 线程数（默认 hardware_concurrency）
   -o, --output-dir <dir>       输出目录（默认与输入同目录）
       --chunk-size <bytes>     加密分块大小（默认 1 MiB；需 ≥4096 且为 16 倍数）
+  -z                            Shorthand for --compress zstd (balanced compression)
+      --compress <algo>          Compress before encrypt: none|lz4|zstd (default: none)
+      --fast                     Shorthand for --compress lz4 (fast, low ratio)
+      --level <N>                Compression level: zstd 1..22 (default 3); lz4 ignores
   -v, --verbose                额外状态打到 stderr
   -q, --quiet                  关闭进度条（错误仍输出）
       --version                打印版本
@@ -104,22 +110,25 @@ Options:
 
 ```
 +────────────────+──────────────────────────────────────+
-│ Fixed Header   │ 112 bytes                            │
+│ Fixed Header   │ v1: 112 bytes; v2: 120 bytes          |
 +────────────────+──────────────────────────────────────+
 │ Encrypted      │ filename_len bytes                   │
 │ Filename       │                                      │
 +────────────────+──────────────────────────────────────+
-│ Tag Length     │ 4 bytes (be32 = 16)                  │
+│ Tag Length      │ 4 bytes (be32 = 16)                 │
 +────────────────+──────────────────────────────────────+
 │ Filename Tag   │ 16 bytes (AES-256-GCM tag)           │
 +────────────────+──────────────────────────────────────+
-│ Ciphertext     │ original_size bytes                  │
+│ Ciphertext     │ v1: original_size bytes              │
+│ Region         │ v2: sum of per-chunk compressed CT   │
 +────────────────+──────────────────────────────────────+
-│ HMAC Footer    │ 32 bytes (HMAC-SHA256)               │
+│ Offset Table   │ v2 only: chunk_count × 4 bytes (be32)│
++────────────────+──────────────────────────────────────+
+│ HMAC Footer    │ 32 bytes (HMAC-SHA256)              │
 +────────────────+──────────────────────────────────────+
 ```
 
-### Fixed Header（112 字节，big-endian）
+### Fixed Header（120 字节，big-endian）
 
 | 偏移 | 长度 | 字段 | 说明 |
 |---:|---:|---|---|
@@ -137,8 +146,10 @@ Options:
 | 96  | 8  | `original_size`| 原文件字节数 |
 | 104 | 4  | `chunk_size`   | 分块大小（默认 1 MiB） |
 | 108 | 4  | `chunk_count`  | chunk 总数 |
+| 112 | 4  | `compression_id` | v2 字段;`0` = NONE / `1` = LZ4 / `2` = ZSTD(v1 文件读出的值为 NONE) |
+| 116 | 8  | `stored_size`  | v2 字段;密文区 + offset table 的总字节数(v1 文件读出 = `original_size`) |
 
-> 结构体 `FileHeader` 内有一个 `reserved` 字段作为前向兼容占位，**不落盘**——`HEADER_FIXED_SIZE` 保持 112 字节。未来 v2 如需新字段可复用该字段或提升 `HEADER_FIXED_SIZE` 并 bump `FORMAT_VERSION`。
+> v1 文件没有 offset 112 / 116 这两个字节,v2 新增。读入时由 HeaderReader 自动归一化:将 v1 视为 `compression_id=NONE`、`stored_size=original_size`,从而解密路径对 v1/v2 一致。写路径永远输出 v2。
 
 ## 加密设计
 
@@ -177,13 +188,25 @@ chunk_iv[8..15] (低 64 位) = big-endian( base_counter + block_offset )
 
 CTR 模式是对称的，加密和解密用同一函数；体内多线程把所有 chunk 切到固定线程池，每个线程拥有独立的 `EVP_CIPHER_CTX`（OpenSSL 上下文非线程安全）。
 
+### 内容压缩（LZ4 / zstd）
+
+每个 chunk 先用 LZ4 或 zstd 压缩，再用 AES-256-CTR 加密；压缩与加密均在 worker 线程中并行执行。
+
+v2 文件 layout：每个 chunk 的 compressed CT 是变长的，文件尾部有一个 offset table 记录每个 chunk 的 compressed 大小（be32 × chunk_count）。HMAC 覆盖 `header_serialised || chunk CT || offset_table`；v1 没有 offset table，HMAC 仅覆盖 `header_serialised || ct`。解密端读取时根据 version 判断是否将 offset table 纳入 HMAC。
+
+IV 派生改为 `derive_chunk_iv_v2`：高 64 位 = base_iv[0..7] XOR be64(chunk_index)；低 64 位 = base_counter + (累积 CT 字节数 / 16)。既保证每 chunk 独立 IV，又对变长 chunk 仍单调递增。v1 派生公式 `derive_chunk_iv(base_iv, i * chunk_size / AES_BLOCK_SIZE)` 适用于等长 chunk。
+
+安全论证：压缩-后-加密对静态文件加密是安全的（参考 7z / ZFS / OpenPGP）；CRIME/BREACH 类攻击需要交互式 chosen-plaintext oracle，文件静态加密不构成该场景。残余信息泄漏只剩"压缩比本身泄露文件类型/熵"，对正常用户低风险。
+
+即使 `--compress none`（或未指定），v2 仍会写 offset table（单解密路径）；v1 文件可读但不再写。
+
 ### 完整性认证（HMAC-SHA256）
 
 ```
-mac = HMAC-SHA256(hmac_key, header_serialised || ciphertext)
+mac = HMAC-SHA256(hmac_key, header_serialised || chunk CT || offset_table)
 ```
 
-32 字节 HMAC 写在文件尾部。解密时按相同顺序重算并做常数时间比较（`CRYPTO_memcmp`），任何 header/ciphertext 篡改会被检测到。
+32 字节 HMAC 写在文件尾部。v2 的 HMAC 覆盖 `header_serialised || chunk CT || offset_table`；v1 没有 offset table，HMAC 仅覆盖 `header_serialised || ct`。解密时按相同顺序重算并做常数时间比较（`CRYPTO_memcmp`），v1/v2 由 version 字段自动区分，任何 header/ciphertext/offset table 篡改会被检测到。
 
 ## 项目结构
 
@@ -195,13 +218,14 @@ mac = HMAC-SHA256(hmac_key, header_serialised || ciphertext)
 ├── include/lock/
 │   ├── constants.hpp     # 文件格式常量、scrypt 默认参数
 │   ├── endian.hpp        # big-endian load/store 辅助
-│   ├── container.hpp     # FileHeader 结构 + HeaderWriter/Reader
 │   ├── kdf.hpp           # scrypt KDF 接口
 │   ├── crypto.hpp        # 加密/解密接口
 │   ├── safe.hpp          # 三种口令来源模式
 │   ├── term.hpp          # termios ECHO 切换
 │   ├── progress.hpp      # 进度条封装
-│   └── cli.hpp           # cli_main() 入口
+│   ├── cli.hpp           # cli_main() 入口
+│   ├── compress.hpp      # 压缩接口(LZ4/zstd)
+│   ├── container.hpp     # FileHeader 结构 + HeaderWriter/Reader
 ├── src/
 │   ├── kdf.cpp           # scrypt via EVP_KDF (OpenSSL 3.x)
 │   ├── container.cpp     # header 序列化/反序列化
@@ -210,6 +234,7 @@ mac = HMAC-SHA256(hmac_key, header_serialised || ciphertext)
 │   ├── term.cpp          # termios 封装
 │   ├── progress.cpp      # indicators 进度条
 │   ├── cli.cpp           # CLI dispatcher + REPL
+│   ├── compress.cpp      # LZ4/zstd block-API 压缩封装
 │   └── main.cpp          # 1 行委派
 └── build/                # 生成产物（gitignore）
 ```
@@ -226,5 +251,6 @@ mac = HMAC-SHA256(hmac_key, header_serialised || ciphertext)
 
 - 单文件加密前会整体读入内存（已加 64 GiB 上限保护）
 - 未支持增量加密、流式 stdin/stdout
-- 未实现 v2 格式（`reserved` 字段占位中）
+- v2 格式已实装;v1 文件只读兼容(由 HeaderReader 自动归一化),写路径永远输出 v2
+- 压缩比会泄露部分文件信息(类型/熵),对极敏感场景可保留 `--compress none`
 - 仅 Linux/macOS 测试通过（依赖 POSIX termios）
