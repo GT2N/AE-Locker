@@ -1,5 +1,6 @@
 #include <lock/crypto.hpp>
 #include <lock/endian.hpp>
+#include <lock/compress.hpp>
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -125,6 +126,27 @@ private:
 // The exact byte stream must match between encrypt_filename and
 // decrypt_filename; that contract is enforced by centralising the
 // construction here.
+//
+// Why compression_id and stored_size are NOT part of the AAD (v1 ↔ v2
+// wire-format stability of the filename GCM tag):
+//   * stored_size is only known AFTER every chunk has been compressed and
+//     the per-chunk CT sizes have been summed. encrypt_filename must run
+//     BEFORE chunk encryption (its output populates header.encrypted_filename
+//     which is then serialised into header_bytes that the workers read for
+//     HMAC), so binding the GCM tag to stored_size would create a chicken-
+//     and-egg deadlock.
+//   * Including compression_id could be done up-front, but it would create
+//     a hidden dependency: a v1 file normalised to compression_id=NONE on
+//     read would produce a DIFFERENT AAD than the original v1 encrypt wrote
+//     (v1 has no compression_id field at all). That would silently break
+//     GCM authentication on every legacy file. Keeping the AAD locked to
+//     the v1 field set preserves both v1 read-back and a clean v2 write
+//     path.
+//   * stored_size and compression_id are instead covered by the trailing
+//     HMAC-SHA256 footer, which can be computed AFTER the chunks are all
+//     done. Tampering with either field still fails verification on decrypt.
+// Wave 3B will document this in the README. Stronger header binding (e.g.
+// including all v2 fields) is a future v3 problem.
 std::array<unsigned char, SHA256_DIGEST_LENGTH>
 filename_aad_digest(const FileHeader& h) {
     std::vector<unsigned char> buf;
@@ -210,19 +232,19 @@ bool ctr_crypt_chunk(std::span<const unsigned char> key,
     return (static_cast<size_t>(outl + finall) == in.size());
 }
 
-// ---- Shared parallel runner ---------------------------------------------
+// ---- Shared parallel runner (legacy; retained for reference) --------------
 //
-// Both encrypt_file and decrypt_file split the buffer into chunk_size chunks,
-// hand each chunk to a worker pulled from a fixed-size thread pool, and have
-// each worker carve chunks off a std::atomic<size_t> counter. This is the
-// simplest correct structure: per-thread EVP_CIPHER_CTX (OpenSSL contexts are
-// NOT thread-safe), no shared mutable state except the atomic counter, the
-// error flag, the error message, and the per-chunk output regions (which are
-// disjoint by construction).
-//
-// `chunk_fn(i, plaintext_start, ciphertext_start, chunk_bytes)` does the
-// actual cryptographic work for chunk i. Throws are forbidden inside it —
-// the wrapper translates failures into the atomic error channel.
+// This uniform-chunk-size worker pool is no longer used by encrypt_file or
+// decrypt_file after the v2 rewrite: the v2 codecs need per-chunk variable
+// output sizes (compression) and a two-phase compress-then-encrypt pipeline,
+// which the in-place `out_buf + off` model here can't express. Both v1 and
+// v2 read/write paths now inline their own atomic-dispatch worker pools
+// that collect per-chunk results into `std::vector<std::vector<unsigned
+// char>>` indexed by chunk_index. Kept here (a) for ABI/source stability for
+// any external consumers and (b) as a reference implementation of the
+// threading model the v2 paths follow (per-thread EVP_CIPHER_CTX via
+// ctr_crypt_chunk; atomic<size_t> chunk dispatch; mutex-guarded error
+// channel; never throw across a thread boundary).
 template <class ChunkFn>
 void run_parallel(size_t total_bytes,
                   size_t chunk_size,
@@ -457,6 +479,34 @@ std::array<unsigned char, IV_SIZE> derive_chunk_iv(
     return iv;
 }
 
+std::array<unsigned char, IV_SIZE> derive_chunk_iv_v2(
+    const std::array<unsigned char, IV_SIZE>& base_iv,
+    uint64_t chunk_index,
+    uint64_t total_ciphertext_bytes) noexcept {
+    std::array<unsigned char, IV_SIZE> iv{};
+
+    // High 64 bits: base_iv[0..7] XOR be64(chunk_index). XOR'ing the index
+    // into the per-file nonce guarantees each chunk gets a DIFFERENT high
+    // nonce (and hence a different IV) even before the low counter is
+    // factored in. base_iv high-nonce is random per file, so this stays
+    // unique across files too.
+    uint64_t high = endian::load_be64(base_iv.data()) ^ chunk_index;
+    endian::store_be64(iv.data(), high);
+
+    // Low 64 bits: base_counter + (total_ciphertext_bytes / AES_BLOCK_SIZE).
+    // Using the prefix CT size (in AES blocks) as the counter increment
+    // guarantees no keystream block is reused across chunks even if the
+    // high-nonce XOR happened to collide (which it can't for distinct
+    // indices within the same file). See crypto.hpp for the full property
+    // argument.
+    uint64_t base_counter =
+        endian::load_be64(base_iv.data() + NONCE_HIGH_BYTES);
+    uint64_t block_offset = total_ciphertext_bytes / AES_BLOCK_SIZE;
+    endian::store_be64(iv.data() + NONCE_HIGH_BYTES,
+                       base_counter + block_offset);
+    return iv;
+}
+
 // ---- Single-chunk CTR ----------------------------------------------------
 
 bool encrypt_chunk_ctr(std::span<const unsigned char> key,
@@ -544,11 +594,15 @@ void encrypt_file(const std::string& input_path,
     // 1. Read the entire plaintext into RAM.
     std::vector<unsigned char> pt = read_whole_file(input_path);
 
-    // 2. Build the FileHeader (we need it fully populated BEFORE
-    //    encrypt_filename, because the header feeds the AAD digest).
+    const size_t cs = opts.chunk_size;
+    const size_t total_pt = pt.size();
+
+    // 2. Build the FileHeader. version = 2 (v2 format with offset table +
+    //    compression_id / stored_size). stored_size is filled in after step
+    //    5 once the per-chunk CT sizes are known.
     FileHeader header;
     header.magic        = MAGIC;
-    header.version      = FORMAT_VERSION;
+    header.version      = 2;  // explicit v2; FORMAT_VERSION (=2) documents intent
     header.algorithm_id = (uint32_t)AlgorithmId::AES_256_CTR_HMAC_SHA256;
     header.kdf_id       = (uint32_t)KdfId::SCRYPT;
     header.kdf_N        = opts.kdf_N;
@@ -559,11 +613,16 @@ void encrypt_file(const std::string& input_path,
     header.flags        = 0x01;  // filename present
     header.original_size = pt.size();
     header.chunk_size   = opts.chunk_size;
-    header.chunk_count  = static_cast<uint32_t>(
-        (pt.size() + opts.chunk_size - 1) / opts.chunk_size);
-    header.reserved     = 0;
+    const size_t chunk_count =
+        (pt.size() + cs - 1) / cs;
+    header.chunk_count    = static_cast<uint32_t>(chunk_count);
+    header.compression_id = static_cast<uint32_t>(opts.compression);
+    header.stored_size    = 0;  // placeholder — filled after chunk encryption
 
     // 3. Encrypt the filename; bind it to the (still-being-built) header.
+    //    The AAD is computed from the v1-compatible header field set — see
+    //    the comment above filename_aad_digest for the rationale (it must
+    //    NOT include compression_id or stored_size so v1 files keep verifying).
     EncryptedFilename enc_name = encrypt_filename(
         opts.file_key, header, original_filename_for_header);
     header.encrypted_filename = std::move(enc_name.ciphertext);
@@ -571,45 +630,210 @@ void encrypt_file(const std::string& input_path,
         header.encrypted_filename.size());
     header.filename_tag       = enc_name.tag;
 
-    // Serialise once — these bytes are written to disk AND feed the HMAC.
+    // Header bytes are serialised now for filename-AAD use; we OVERWRITE
+    // header_bytes at the end of step 5 once stored_size is known.
     std::vector<unsigned char> header_bytes = HeaderWriter::serialise(header);
 
-    // 4. Allocate the ciphertext buffer (same length as plaintext for CTR).
-    std::vector<unsigned char> ct(pt.size());
+    // ---------- Phase A: parallel compress (or passthrough) all chunks ------
+    //
+    // The v2 per-chunk IV (derive_chunk_iv_v2) takes `total_ciphertext_bytes`
+    // = sum of compressed sizes [0..i-1] as a counter input. That makes the
+    // IV depend on the COMPRESSED sizes of earlier chunks; to know those
+    // before encrypting chunk i, we must run compression to completion
+    // first. So encrypt is two phases:
+    //   A. Parallel-compress each chunk into `compressed_per_chunk[i]`
+    //      (thread-safe: compress_chunk uses a thread-local ZSTD_CCtx).
+    //   B. Compute prefix sums of compressed sizes.
+    //   C. Parallel-CTR-encrypt each chunk with its known prefix sum.
+    // Memory cost: ~2x original_size for compression intermediates (kept
+    // in RAM) — tolerable per the spec.
+    std::vector<std::vector<unsigned char>> compressed_per_chunk(chunk_count);
+    if (chunk_count > 0) {
+        const size_t hw_a = std::thread::hardware_concurrency();
+        size_t nthreads_a = (opts.num_threads == 0) ? hw_a : opts.num_threads;
+        if (nthreads_a == 0) nthreads_a = 1;
+        if (nthreads_a > chunk_count) nthreads_a = chunk_count;
 
-    // 5. Parallel-encrypt every chunk.
-    //    Each worker builds its own per-call EVP_CIPHER_CTX via
-    //    ctr_crypt_chunk (which constructs a fresh ctx and tears it down
-    //    before returning) — so no context ever crosses a thread boundary.
-    const size_t cs = opts.chunk_size;
-    auto do_chunk = [&](size_t i, unsigned char* in_p, unsigned char* out_p,
-                        size_t len) -> bool {
-        uint64_t block_offset =
-            (static_cast<uint64_t>(i) * cs) / AES_BLOCK_SIZE;
-        auto chunk_iv = derive_chunk_iv(opts.base_iv, block_offset);
-        return encrypt_chunk_ctr(
-            std::span<const unsigned char>(opts.file_key.data(),
-                                            opts.file_key.size()),
-            std::span<const unsigned char, IV_SIZE>(chunk_iv),
-            std::span<const unsigned char>(in_p,  len),
-            std::span<unsigned char>(out_p, len));
-    };
+        std::atomic<size_t> next_a{0};
+        std::atomic<bool>   failed_a{false};
+        std::mutex          err_mutex_a;
+        std::string         err_msg_a;
 
-    run_parallel(pt.size(), cs, opts.num_threads,
-                 pt.data(), ct.data(),
-                 do_chunk, opts.progress);
+        auto compressor = [&]() {
+            for (;;) {
+                if (failed_a.load(std::memory_order_relaxed)) return;
+                size_t i = next_a.fetch_add(1, std::memory_order_relaxed);
+                if (i >= chunk_count) return;
 
-    // 6. Compute HMAC over (header_serialised || ciphertext). Single-threaded
-    //    pass after every worker joined — the covered bytes are immutable by
-    //    the time we get here.
+                size_t off      = i * cs;
+                size_t this_len = std::min(cs, total_pt - off);
+                std::span<const unsigned char> pt_span(pt.data() + off, this_len);
+                try {
+                    if (opts.compression != CompressionId::NONE) {
+                        compressed_per_chunk[i] =
+                            compress_chunk(opts.compression, pt_span,
+                                            opts.compression_level);
+                    } else {
+                        compressed_per_chunk[i].assign(pt_span.begin(),
+                                                       pt_span.end());
+                    }
+                } catch (const std::exception& e) {
+                    bool expected = false;
+                    if (failed_a.compare_exchange_strong(
+                            expected, true, std::memory_order_acq_rel)) {
+                        std::lock_guard<std::mutex> lk(err_mutex_a);
+                        err_msg_a = std::string("compress chunk ")
+                                    + std::to_string(i) + " failed: " + e.what();
+                    }
+                    return;
+                }
+            }
+        };
+
+        std::vector<std::thread> pool_a;
+        pool_a.reserve(nthreads_a);
+        for (size_t t = 0; t < nthreads_a; ++t) pool_a.emplace_back(compressor);
+        for (auto& th : pool_a) th.join();
+
+        if (failed_a.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lk(err_mutex_a);
+            throw std::runtime_error(err_msg_a);
+        }
+    }
+
+    // ---------- Phase B: compute per-chunk sizes and prefix sums ------------
+    // prefix_ct[i] = sum of compressed_per_chunk[0..i-1].size(); prefix_ct[0]=0.
+    // This is EXACTLY the same value the decrypt loop computes from the
+    // on-disk offset table, so iv stability across encrypt/decrypt holds.
+    std::vector<uint64_t> prefix_ct(chunk_count == 0 ? 0 : chunk_count, 0ULL);
+    uint64_t running = 0;
+    for (size_t i = 0; i < chunk_count; ++i) {
+        prefix_ct[i] = running;
+        const size_t sz = compressed_per_chunk[i].size();
+        running += sz;
+        if (running > static_cast<uint64_t>(std::numeric_limits<uint64_t>::max())) {
+            throw std::runtime_error("compressed size overflow prefix sum");
+        }
+        // Sanity: ct sizes written to the offset table must fit in uint32.
+        if (static_cast<uint64_t>(static_cast<uint32_t>(sz)) != sz) {
+            throw std::runtime_error("chunk CT size overflow uint32");
+        }
+    }
+
+    // ---------- Phase C: parallel CTR-encrypt all (now-fixed-size) chunks ---
+    std::vector<std::vector<unsigned char>> ct_per_chunk(chunk_count);
+    if (chunk_count > 0) {
+        const size_t hw_c = std::thread::hardware_concurrency();
+        size_t nthreads_c = (opts.num_threads == 0) ? hw_c : opts.num_threads;
+        if (nthreads_c == 0) nthreads_c = 1;
+        if (nthreads_c > chunk_count) nthreads_c = chunk_count;
+
+        std::atomic<size_t> next_c{0};
+        std::atomic<bool>   failed_c{false};
+        std::mutex          err_mutex_c;
+        std::string         err_msg_c;
+        std::atomic<size_t> bytes_done{0};
+
+        auto encryptor = [&]() {
+            for (;;) {
+                if (failed_c.load(std::memory_order_relaxed)) return;
+                size_t i = next_c.fetch_add(1, std::memory_order_relaxed);
+                if (i >= chunk_count) return;
+
+                auto& compressed = compressed_per_chunk[i];
+                std::vector<unsigned char> ct(compressed.size());
+                auto chunk_iv = derive_chunk_iv_v2(
+                    opts.base_iv,
+                    static_cast<uint64_t>(i),
+                    prefix_ct[i]);
+
+                bool ok = encrypt_chunk_ctr(
+                    std::span<const unsigned char>(opts.file_key.data(),
+                                                    opts.file_key.size()),
+                    std::span<const unsigned char, IV_SIZE>(chunk_iv),
+                    std::span<const unsigned char>(compressed.data(),
+                                                    compressed.size()),
+                    std::span<unsigned char>(ct.data(), ct.size()));
+                if (!ok) {
+                    bool expected = false;
+                    if (failed_c.compare_exchange_strong(
+                            expected, true, std::memory_order_acq_rel)) {
+                        std::lock_guard<std::mutex> lk(err_mutex_c);
+                        err_msg_c = "OpenSSL chunk " + std::to_string(i) +
+                                    " failed: " + openssl_last_error();
+                    }
+                    return;
+                }
+
+                // Each chunk_index is uniquely dispatched to exactly one worker,
+                // so ct_per_chunk[i] is written exactly once — no mutex needed.
+                ct_per_chunk[i] = std::move(ct);
+
+                // Progress is reported in PLAINTEXT bytes per chunk (not
+                // compressed bytes) so the user-visible rate matches the
+                // file they handed us.
+                const size_t this_pt_len = std::min(
+                    cs, total_pt - i * cs);
+                size_t done = bytes_done.fetch_add(this_pt_len,
+                                                   std::memory_order_relaxed)
+                              + this_pt_len;
+                if (opts.progress) opts.progress(done, total_pt);
+            }
+        };
+
+        std::vector<std::thread> pool_c;
+        pool_c.reserve(nthreads_c);
+        for (size_t t = 0; t < nthreads_c; ++t) pool_c.emplace_back(encryptor);
+        for (auto& th : pool_c) th.join();
+
+        if (failed_c.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lk(err_mutex_c);
+            throw std::runtime_error(err_msg_c);
+        }
+    } else if (opts.progress) {
+        opts.progress(0, 0);
+    }
+
+    // 6. Geometry: per-chunk CT sizes, offset table, stored_size, final header.
+    uint64_t total_ct_bytes = 0;
+    std::vector<uint32_t> compressed_sizes(chunk_count);
+    for (size_t i = 0; i < chunk_count; ++i) {
+        const auto& cti = ct_per_chunk[i];
+        const uint32_t sz = static_cast<uint32_t>(cti.size());
+        compressed_sizes[i] = sz;
+        total_ct_bytes += sz;
+    }
+    const uint64_t offset_table_bytes =
+        static_cast<uint64_t>(chunk_count) * 4ULL;
+    header.stored_size = total_ct_bytes + offset_table_bytes;
+
+    // Re-serialise the header with stored_size & compression_id now final.
+    header_bytes = HeaderWriter::serialise(header);
+
+    // Build the offset table on disk (be32 per chunk).
+    std::vector<unsigned char> offset_table(static_cast<size_t>(offset_table_bytes));
+    for (size_t i = 0; i < chunk_count; ++i) {
+        endian::store_be32(offset_table.data() + i * 4,
+                            compressed_sizes[i]);
+    }
+
+    // 7. Compute HMAC over (header_serialised || concatenated_chunk_ciphertext
+    //    || offset_table_bytes). Single-threaded pass after every worker has
+    //    joined — the covered bytes are immutable by the time we get here.
+    //    HMAC coverage: header || chunk_cts || offset_table.
     StreamingHmac hmac(std::span<const unsigned char>(opts.hmac_key.data(),
                                                      opts.hmac_key.size()));
     if (!header_bytes.empty()) hmac.update(header_bytes.data(),
                                             header_bytes.size());
-    if (!ct.empty())           hmac.update(ct.data(), ct.size());
+    for (size_t i = 0; i < chunk_count; ++i) {
+        const auto& cti = ct_per_chunk[i];
+        if (!cti.empty()) hmac.update(cti.data(), cti.size());
+    }
+    if (!offset_table.empty()) hmac.update(offset_table.data(),
+                                            offset_table.size());
     std::array<unsigned char, HMAC_SHA256_SIZE> mac = hmac.final_bytes();
 
-    // 7. Write the output file: header || ct || mac.
+    // 8. Write the output file: header || chunk_cts || offset_table || mac.
     std::ofstream out(output_path, std::ios::binary | std::ios::trunc);
     if (!out) {
         throw std::runtime_error("cannot open output file: " + output_path);
@@ -619,10 +843,18 @@ void encrypt_file(const std::string& input_path,
                   static_cast<std::streamsize>(header_bytes.size()));
         if (!out) throw std::runtime_error("write header failed");
     }
-    if (!ct.empty()) {
-        out.write(reinterpret_cast<const char*>(ct.data()),
-                  static_cast<std::streamsize>(ct.size()));
-        if (!out) throw std::runtime_error("write ciphertext failed");
+    for (size_t i = 0; i < chunk_count; ++i) {
+        const auto& cti = ct_per_chunk[i];
+        if (!cti.empty()) {
+            out.write(reinterpret_cast<const char*>(cti.data()),
+                      static_cast<std::streamsize>(cti.size()));
+            if (!out) throw std::runtime_error("write ciphertext failed");
+        }
+    }
+    if (!offset_table.empty()) {
+        out.write(reinterpret_cast<const char*>(offset_table.data()),
+                  static_cast<std::streamsize>(offset_table.size()));
+        if (!out) throw std::runtime_error("write offset table failed");
     }
     out.write(reinterpret_cast<const char*>(mac.data()),
               static_cast<std::streamsize>(mac.size()));
@@ -663,18 +895,88 @@ void decrypt_file(const std::string& input_path,
         throw std::runtime_error("header chunk_count mismatch");
     }
 
-    // Read ciphertext region.
-    std::vector<unsigned char> ct(header.original_size);
-    if (!ct.empty()) {
-        in.read(reinterpret_cast<char*>(ct.data()),
-                static_cast<std::streamsize>(ct.size()));
+    // 3. Geometry validation. Two paths:
+    //    v1: offset_table_size = 0, ct_total_size = original_size,
+    //        offsets are SYNTHESISED as min(chunk_size, original_size - i*chunk_size)
+    //        so v1 and v2 share the same parallel decrypt loop body.
+    //        (HeaderReader has already normalised stored_size=original_size,
+    //        compression_id=NONE for v1.)
+    //    v2: offset_table_size = chunk_count * 4, ct_total_size =
+    //        stored_size - offset_table_size (validated to be >= 0);
+    //        offsets come straight off disk; their sum is checked against
+    //        ct_total_size.
+    const bool is_v1 = (header.version == 1);
+    const size_t cs = header.chunk_size;
+    const size_t chunk_count = header.chunk_count;
+    const uint64_t offset_table_size =
+        is_v1 ? 0ULL : (static_cast<uint64_t>(chunk_count) * 4ULL);
+    uint64_t ct_total_size;
+    if (is_v1) {
+        ct_total_size = header.original_size;  // == header.stored_size post-norm
+    } else {
+        if (header.stored_size < offset_table_size) {
+            throw std::runtime_error("stored_size too small for offset table");
+        }
+        ct_total_size = header.stored_size - offset_table_size;
+    }
+
+    if (ct_total_size > MAX_PLAINTEXT_BYTES) {
+        throw std::runtime_error("declared ciphertext region > 64 GiB");
+    }
+
+    // Read ct_region.
+    std::vector<unsigned char> ct_region(static_cast<size_t>(ct_total_size));
+    if (!ct_region.empty()) {
+        in.read(reinterpret_cast<char*>(ct_region.data()),
+                static_cast<std::streamsize>(ct_region.size()));
         if (static_cast<std::streamsize>(in.gcount())
-              != static_cast<std::streamsize>(ct.size())) {
+              != static_cast<std::streamsize>(ct_region.size())) {
             throw std::runtime_error("short read on ciphertext region");
         }
     }
 
-    // Read + verify the trailing 32-byte HMAC footer.
+    // Read & parse the offset table (v2 only). For v1 there is no table —
+    // synthesised offsets are computed below.
+    std::vector<unsigned char> offset_table_bytes(
+        static_cast<size_t>(offset_table_size));
+    std::vector<uint32_t> offsets(chunk_count);
+    if (!is_v1) {
+        if (!offset_table_bytes.empty()) {
+            in.read(reinterpret_cast<char*>(offset_table_bytes.data()),
+                    static_cast<std::streamsize>(offset_table_bytes.size()));
+            if (static_cast<std::streamsize>(in.gcount())
+                  != static_cast<std::streamsize>(offset_table_bytes.size())) {
+                throw std::runtime_error("short read on offset table");
+            }
+        }
+        uint64_t sum = 0;
+        for (size_t i = 0; i < chunk_count; ++i) {
+            offsets[i] = endian::load_be32(
+                offset_table_bytes.data() + i * 4);
+            sum += offsets[i];
+        }
+        if (sum != ct_total_size) {
+            throw std::runtime_error("offset table sum != ciphertext region size");
+        }
+    } else {
+        // Synthesise the v1 chunk geometry: each chunk has size
+        // min(chunk_size, original_size - i*chunk_size), so the layout
+        // matches the legacy fixed-chunk layout. Sum-check vs original_size.
+        uint64_t sum = 0;
+        for (size_t i = 0; i < chunk_count; ++i) {
+            const uint64_t remaining =
+                header.original_size - static_cast<uint64_t>(i) * cs;
+            const uint32_t this_sz = static_cast<uint32_t>(
+                std::min<uint64_t>(cs, remaining));
+            offsets[i] = this_sz;
+            sum += this_sz;
+        }
+        if (sum != header.original_size) {
+            throw std::runtime_error("synthesised v1 offsets sum mismatch");
+        }
+    }
+
+    // 4. Read the trailing 32-byte HMAC footer.
     std::array<unsigned char, HMAC_SHA256_SIZE> stored_mac{};
     in.read(reinterpret_cast<char*>(stored_mac.data()),
             static_cast<std::streamsize>(HMAC_SHA256_SIZE));
@@ -683,53 +985,191 @@ void decrypt_file(const std::string& input_path,
         throw std::runtime_error("input file missing HMAC footer");
     }
 
-    // Reconstruct the header bytes that were HMACed on encrypt. We use the
-    // *parsed* header, re-serialised — HeaderWriter::serialise is
-    // round-trippable for the fields it round-trips (which is all the
-    // fields HMAC covers). If the on-disk header bytes had been tampered
-    // with but still parsed, the AAD/round-trip mismatch would also break
-    // filename GCM authentication if the user attempted it.
+    // 5. Reconstruct the header bytes that were HMACed on encrypt and compute
+    //    HMAC(hmac_key, header_serialised || ct_region || offset_table_bytes).
+    //    HMAC coverage: header_serialised || chunk_cts || offset_table.
+    //    v1's writer emitted a 112-byte fixed header (no compression_id nor
+    //    stored_size); v2's HeaderWriter always emits 124. For v1 files we
+    //    shift the variable part (filename+tag+taglen) back 12 bytes to where
+    //    v1 placed it, then truncate to 112+variable so the HMAC input matches
+    //    what v1 encrypt produced.
     std::vector<unsigned char> header_bytes = HeaderWriter::serialise(header);
+    if (is_v1) {
+        const size_t var_size = header.filename_len + 4 + FILENAME_TAG_SIZE;
+        if (header_bytes.size() < 12 + var_size) {
+            throw std::runtime_error("internal: v1 header too short");
+        }
+        const size_t var_off_v2 = header_bytes.size() - var_size;
+        std::memmove(header_bytes.data() + 112,
+                     header_bytes.data() + var_off_v2,
+                     var_size);
+        header_bytes.resize(112 + var_size);
+    }
 
     std::array<unsigned char, HMAC_SHA256_SIZE> computed_mac{};
     {
-        StreamingHmac hmac(std::span<const unsigned char>(opts.hmac_key.data(),
-                                                         opts.hmac_key.size()));
+        StreamingHmac hmac(std::span<const unsigned char>(
+            opts.hmac_key.data(), opts.hmac_key.size()));
         if (!header_bytes.empty()) hmac.update(header_bytes.data(),
                                                 header_bytes.size());
-        if (!ct.empty())           hmac.update(ct.data(), ct.size());
+        if (!ct_region.empty())   hmac.update(ct_region.data(),
+                                                ct_region.size());
+        if (!offset_table_bytes.empty())
+            hmac.update(offset_table_bytes.data(),
+                        offset_table_bytes.size());
         computed_mac = hmac.final_bytes();
     }
-    // Constant-time compare to defeat timing oracles on tamper detection.
+    // 6. Constant-time compare to defeat timing oracles on tamper detection.
     if (CRYPTO_memcmp(computed_mac.data(), stored_mac.data(),
                       HMAC_SHA256_SIZE) != 0) {
         throw std::runtime_error(
             "HMAC verification failed — file is truncated or tampered");
     }
 
-    // Parallel-decrypt. Same shape as encrypt: per-thread EVP_CIPHER_CTX
-    // via ctr_crypt_chunk, chunks dispatched off an atomic counter.
-    std::vector<unsigned char> pt(header.original_size);
-    const size_t cs = header.chunk_size;
-    auto do_chunk = [&](size_t i, unsigned char* in_p, unsigned char* out_p,
-                        size_t len) -> bool {
-        uint64_t block_offset =
-            (static_cast<uint64_t>(i) * cs) / AES_BLOCK_SIZE;
-        auto chunk_iv = derive_chunk_iv(header.base_iv, block_offset);
-        return decrypt_chunk_ctr(
-            std::span<const unsigned char>(opts.file_key.data(),
-                                            opts.file_key.size()),
-            std::span<const unsigned char, IV_SIZE>(chunk_iv),
-            std::span<const unsigned char>(in_p,  len),
-            std::span<unsigned char>(out_p, len));
-    };
+    // Compute chunk start offsets (prefix sums of `offsets`).
+    std::vector<uint64_t> chunk_start(chunk_count == 0 ? 0 : chunk_count, 0ULL);
+    uint64_t running = 0;
+    for (size_t i = 0; i < chunk_count; ++i) {
+        chunk_start[i] = running;
+        running += offsets[i];
+    }
 
-    run_parallel(ct.size(), cs, opts.num_threads,
-                 ct.data(), pt.data(),
-                 do_chunk, opts.progress);
+    // 7. Parallel-decrypt. Per-thread EVP_CIPHER_CTX via ctr_crypt_chunk,
+    //    chunks dispatched off an atomic counter. Each chunk is CTR-decrypted
+    //    to its "compressed plaintext" then (if compression_id != NONE) passed
+    //    through decompress_chunk before being written to its slot in pt_buffer
+    //    at offset i * chunk_size. Progress is reported in PLAINTEXT bytes
+    //    per chunk (same as encrypt).
+    std::vector<unsigned char> pt(static_cast<size_t>(header.original_size));
+    const CompressionId cid = static_cast<CompressionId>(header.compression_id);
 
-    // Write the plaintext. Any HMAC/tamper check has already passed, so
-    // writing the plaintext here is safe.
+    if (chunk_count > 0) {
+        const size_t hw = std::thread::hardware_concurrency();
+        size_t nthreads = (opts.num_threads == 0) ? hw : opts.num_threads;
+        if (nthreads == 0) nthreads = 1;
+        if (nthreads > chunk_count) nthreads = chunk_count;
+
+        std::atomic<size_t> next_chunk{0};
+        std::atomic<bool>   failed{false};
+        std::mutex          err_mutex;
+        std::string         err_msg;
+        std::atomic<size_t> bytes_done{0};
+
+        auto worker = [&]() {
+            for (;;) {
+                if (failed.load(std::memory_order_relaxed)) return;
+                size_t i = next_chunk.fetch_add(1, std::memory_order_relaxed);
+                if (i >= chunk_count) return;
+
+                const uint64_t start_i = chunk_start[i];
+                const uint32_t this_ct = offsets[i];
+                // Expected PLAINTEXT (post-decompress) size of this chunk.
+                const size_t expected_pt =
+                    (i + 1 == chunk_count)
+                        ? static_cast<size_t>(
+                              header.original_size - (uint64_t)i * cs)
+                        : cs;
+
+                std::span<const unsigned char> ct_span(
+                    ct_region.data() + static_cast<size_t>(start_i),
+                    static_cast<size_t>(this_ct));
+
+                // CTR-decrypt to "compressed plaintext".
+                std::vector<unsigned char> compressed_pt(this_ct);
+                // IV: v1 uses the legacy derive_chunk_iv with
+                //     block_offset = i*chunk_size / AES_BLOCK_SIZE;
+                //     v2 uses derive_chunk_iv_v2 with the prefix-CT sum,
+                //     which equals chunk_start[i] from the offset table.
+                std::array<unsigned char, IV_SIZE> chunk_iv;
+                if (is_v1) {
+                    const uint64_t block_offset =
+                        (static_cast<uint64_t>(i) * cs) / AES_BLOCK_SIZE;
+                    chunk_iv = derive_chunk_iv(header.base_iv, block_offset);
+                } else {
+                    chunk_iv = derive_chunk_iv_v2(header.base_iv,
+                                                   static_cast<uint64_t>(i),
+                                                   start_i);
+                }
+
+                bool ok = decrypt_chunk_ctr(
+                    std::span<const unsigned char>(opts.file_key.data(),
+                                                    opts.file_key.size()),
+                    std::span<const unsigned char, IV_SIZE>(chunk_iv),
+                    ct_span,
+                    std::span<unsigned char>(compressed_pt.data(),
+                                              compressed_pt.size()));
+                if (!ok) {
+                    bool expected = false;
+                    if (failed.compare_exchange_strong(
+                            expected, true, std::memory_order_acq_rel)) {
+                        std::lock_guard<std::mutex> lk(err_mutex);
+                        err_msg = "OpenSSL decrypt chunk " + std::to_string(i) +
+                                  " failed: " + openssl_last_error();
+                    }
+                    return;
+                }
+
+                // Decompress (or pass through with size-check for NONE).
+                std::vector<unsigned char> pt_chunk;
+                try {
+                    pt_chunk = decompress_chunk(
+                        cid,
+                        std::span<const unsigned char>(compressed_pt.data(),
+                                                         compressed_pt.size()),
+                        expected_pt);
+                } catch (const std::exception& e) {
+                    bool expected = false;
+                    if (failed.compare_exchange_strong(
+                            expected, true, std::memory_order_acq_rel)) {
+                        std::lock_guard<std::mutex> lk(err_mutex);
+                        err_msg = std::string("decompress chunk ")
+                                  + std::to_string(i) + " failed: " + e.what();
+                    }
+                    return;
+                }
+                if (pt_chunk.size() != expected_pt) {
+                    bool expected = false;
+                    if (failed.compare_exchange_strong(
+                            expected, true, std::memory_order_acq_rel)) {
+                        std::lock_guard<std::mutex> lk(err_mutex);
+                        err_msg = "decompressed chunk " + std::to_string(i) +
+                                  " size mismatch (got " +
+                                  std::to_string(pt_chunk.size()) + ", expected " +
+                                  std::to_string(expected_pt) + ")";
+                    }
+                    return;
+                }
+
+                // Write pt_chunk into pt at offset i * chunk_size.
+                // Each chunk_index is uniquely dispatched to exactly one worker,
+                // so pt[i*cs .. i*cs + expected_pt) is written once — no mutex.
+                std::memcpy(pt.data() + static_cast<size_t>(i) * cs,
+                            pt_chunk.data(), expected_pt);
+
+                size_t done = bytes_done.fetch_add(expected_pt,
+                                                    std::memory_order_relaxed)
+                              + expected_pt;
+                if (opts.progress) {
+                    opts.progress(done, static_cast<size_t>(header.original_size));
+                }
+            }
+        };
+
+        std::vector<std::thread> pool;
+        pool.reserve(nthreads);
+        for (size_t t = 0; t < nthreads; ++t) pool.emplace_back(worker);
+        for (auto& th : pool) th.join();
+
+        if (failed.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lk(err_mutex);
+            throw std::runtime_error(err_msg);
+        }
+    } else if (opts.progress) {
+        opts.progress(0, 0);
+    }
+
+    // 8. Write the plaintext. Any HMAC/tamper check has already passed, so
+    //    writing the plaintext here is safe.
     std::ofstream out(output_path, std::ios::binary | std::ios::trunc);
     if (!out) {
         throw std::runtime_error("cannot open output file: " + output_path);
