@@ -12,7 +12,7 @@
 - **scrypt** KDF 从口令派生 64 字节密钥材料：32 字节 `file_key` + 32 字节 `hmac_key`
 - **HMAC-SHA256** 覆盖 `header || ciphertext` 作为尾部认证脚
 - **文件名不可见**：原始文件名在 header 中只以密文形式存在；解密时从 header 还原
-- **多线程**：单文件内 `N` 个 chunk 并行（默认硬件并发，`-j N` 可配），多文件之间也并行
+- **多线程**：单文件内 `N` 个 compress worker 并行（`-j N` 控制；encrypt 步骤因 v2 IV 需累积 CT size 为单线程串行），多文件之间也并行
 - **进度条**：每文件独立 + Overall 总进度（基于 `indicators` 库）
 - **多种 CLI 风格**：子命令、`-c flag`、`--cli` 交互式
 - **多种口令来源**：交互式（默认）、文件（`-p`，需 `--no-safe`）、环境变量（`--password-env-var`，需 `--no-safe`）
@@ -208,6 +208,76 @@ mac = HMAC-SHA256(hmac_key, header_serialised || chunk CT || offset_table)
 
 32 字节 HMAC 写在文件尾部。v2 的 HMAC 覆盖 `header_serialised || chunk CT || offset_table`；v1 没有 offset table，HMAC 仅覆盖 `header_serialised || ct`。解密时按相同顺序重算并做常数时间比较（`CRYPTO_memcmp`），v1/v2 由 version 字段自动区分，任何 header/ciphertext/offset table 篡改会被检测到。
 
+## 流式 I/O 与内存模型
+
+v2 使用流式 chunk pipeline 代替旧的"整体读入内存"模型，内存峰值与文件大小解耦。
+
+### 加密流
+
+```
+reader (单线程顺序读) → N× compress worker (并行, -j) → encrypt-then-write (单线程, 串行)
+                                                                       ↓
+                                                              ofstream + streaming HMAC
+                                                                       ↓
+                                                          写 offset_table → HMAC → 32B footer
+```
+
+- reader 单线程顺序从源文件读取 chunk
+- N 个 compress worker（由 `-j` 控制）并行执行 LZ4/zstd 压缩
+- 单线程加密 + 写出串行执行：因为 v2 的 `derive_chunk_iv_v2` 需要累积前序 chunk 的 CT size 才能计算当前 IV
+- 写 ofstream 的同时 streaming `HMAC.update(ct_chunk)`
+- 全部 chunk 处理完后顺序写 offset_table，update HMAC 包含 offset_table，最后写 32 字节 footer
+
+### 解密流
+
+```
+reader (header + offset_table) → N× decrypt+decompress (并行, -j) → 单线程顺序写 .lockdec.tmp
+                                                                               ↓
+                                                                      streaming HMAC
+                                                                               ↓
+                                                              EOF → 比 footer → rename / unlink
+```
+
+- reader 读 header 和 offset_table，获取每 chunk 的密文偏移
+- N 个 worker（由 `-j` 控制）并行做 CTR decrypt + decompress
+- 单线程顺序将明文写入与输出同目录的 `.lockdec.tmp` 临时文件（与产物同卷，保证 `rename(2)` 为原子操作）
+- 同时 streaming `HMAC.update`
+- EOF 后比对 HMAC footer：成功则 `rename(2)` 原子替换到最终路径，失败则 `unlink` 临时文件并报错
+
+### 内存峰值
+
+```
+peak_memory = O((N + 1) × chunk_size)
+```
+
+与文件大小完全无关。每个 worker 持有约一个 chunk 的 buffer，单线程写端也持有一个 chunk。适合加密 GB 级文件。
+
+### 自动调参
+
+用户未显式指定 `--chunk-size` 或 `-j` 时，由 `memory` 模块根据可用内存自适应推荐：
+
+- Linux：`sysconf(_SC_AVPHYS_PAGES)`
+- macOS：`sysctl` 系列调用
+- 均失败：退保守值（512 MiB 可用 / 1 GiB chunk 预算）
+
+推荐值 clamp 规则：
+- `chunk_size`：`[256 KiB, 4 MiB]` 且为 16 的倍数
+- `jobs`：`[1, hardware_concurrency]`，每个 worker 预留约 `4 × chunk_size` 字节预算
+
+用户可显式 `--chunk-size <bytes>` 或 `-j <N>` 覆盖自动推荐；`-v` 会在 stderr 打印实际使用的值：
+
+```
+[memory] available=2048 MiB; chunk_size=1024 KiB; jobs=4
+```
+
+### `.tmp` 文件约定
+
+解密临时文件命名为 `<output>.lockdec.tmp`，与最终产物同目录（同文件系统），保证 `rename(2)` 为原子操作。
+
+- 正常完成（HMAC 通过）：`rename(2)` .tmp → 最终路径
+- HMAC 失败或解密中断：`unlink` 清理 .tmp
+- 进程异常退出（SIGKILL、系统崩溃）：.tmp 文件残留，需要用户手动清理（没有 pid/lock 文件机制）
+
 ## 项目结构
 
 ```
@@ -226,6 +296,7 @@ mac = HMAC-SHA256(hmac_key, header_serialised || chunk CT || offset_table)
 │   ├── cli.hpp           # cli_main() 入口
 │   ├── compress.hpp      # 压缩接口(LZ4/zstd)
 │   ├── container.hpp     # FileHeader 结构 + HeaderWriter/Reader
+│   ├── memory.hpp        # 内存检测 + 流式参数推荐
 ├── src/
 │   ├── kdf.cpp           # scrypt via EVP_KDF (OpenSSL 3.x)
 │   ├── container.cpp     # header 序列化/反序列化
@@ -235,6 +306,7 @@ mac = HMAC-SHA256(hmac_key, header_serialised || chunk CT || offset_table)
 │   ├── progress.cpp      # indicators 进度条
 │   ├── cli.cpp           # CLI dispatcher + REPL
 │   ├── compress.cpp      # LZ4/zstd block-API 压缩封装
+│   ├── memory.cpp        # 可用内存检测 + chunk_size/jobs 自动推荐
 │   └── main.cpp          # 1 行委派
 └── build/                # 生成产物（gitignore）
 ```
@@ -243,13 +315,13 @@ mac = HMAC-SHA256(hmac_key, header_serialised || chunk CT || offset_table)
 
 - 无法提供"前向安全"；口令强度决定一切——建议 ≥ 12 位混合字符
 - 从文件/环境变量读口令默认禁用：文件系统日志、core dump、`/proc/<pid>/environ` 都可能泄漏
-- 解密时 HMAC 验证在写入明文**之前**完成，避免未认证数据落盘
+- 解密时先将明文写入与输出同目录的 `.lockdec.tmp` 临时文件，边解密边 streaming HMAC；全部 chunk 处理完、HMAC 与 footer 比对成功后，用 `rename(2)` 原子替换到最终路径；若比对失败则 `unlink` 临时文件并报错。进程异常退出留下的 `.tmp` 不会被当作正式产物（崩在 HMAC 比对之前也会被清理）
 - `RAND_bytes` 来自 OpenSSL 默认随机源（getrandom/CSPRNG）
 - 未提供密钥轮换/多 recipient/密钥托管；适合个人文件加密场景
 
 ## 限制
 
-- 单文件加密前会整体读入内存（已加 64 GiB 上限保护）
+- 经 v2 流式重写，内存峰值与文件大小无关，固定为 `O((N+1) × chunk_size)`；不存在 64 GiB 硬上限（也不再设 MAX_PLAINTEXT_BYTES 限制）
 - 未支持增量加密、流式 stdin/stdout
 - v2 格式已实装;v1 文件只读兼容(由 HeaderReader 自动归一化),写路径永远输出 v2
 - 压缩比会泄露部分文件信息(类型/熵),对极敏感场景可保留 `--compress none`
