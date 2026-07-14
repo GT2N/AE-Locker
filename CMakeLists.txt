@@ -177,6 +177,7 @@ set(LOCK_SOURCES
     src/crypto.cpp
     src/compress.cpp
     src/container.cpp
+    src/memory.cpp
     src/kdf.cpp
     src/progress.cpp
     src/safe.cpp
