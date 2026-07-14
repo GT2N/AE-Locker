@@ -110,7 +110,7 @@ Options:
 
 ```
 +────────────────+──────────────────────────────────────+
-│ Fixed Header   │ v1: 112 bytes; v2: 120 bytes          |
+│ Fixed Header   │ v1: 112 bytes; v2: 124 bytes          |
 +────────────────+──────────────────────────────────────+
 │ Encrypted      │ filename_len bytes                   │
 │ Filename       │                                      │
@@ -128,7 +128,7 @@ Options:
 +────────────────+──────────────────────────────────────+
 ```
 
-### Fixed Header（120 字节，big-endian）
+### Fixed Header（124 字节，big-endian）
 
 | 偏移 | 长度 | 字段 | 说明 |
 |---:|---:|---|---|
