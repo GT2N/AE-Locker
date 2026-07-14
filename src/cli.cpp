@@ -1017,7 +1017,9 @@ ExitCode run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
         if (what.find("does not exist") != std::string::npos ||
             what.find("already exists") != std::string::npos ||
             what.find("cannot open") != std::string::npos ||
-            what.find("cannot create output directory") != std::string::npos) {
+            what.find("cannot create output directory") != std::string::npos ||
+            what.find("filesystem error") != std::string::npos ||
+            what.find("cannot get file size") != std::string::npos) {
             return ExitCode::Io;
         }
         return ExitCode::Internal;
@@ -1194,7 +1196,9 @@ ExitCode classify_runtime_error(const std::string& what) {
     if (what.find("does not exist") != std::string::npos ||
         what.find("already exists") != std::string::npos ||
         what.find("cannot open") != std::string::npos ||
-        what.find("cannot create output directory") != std::string::npos) {
+        what.find("cannot create output directory") != std::string::npos ||
+        what.find("filesystem error") != std::string::npos ||
+        what.find("cannot get file size") != std::string::npos) {
         return ExitCode::Io;
     }
     return ExitCode::Internal;
