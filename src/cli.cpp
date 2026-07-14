@@ -3,6 +3,7 @@
 // tracker. main() (in main.cpp) delegates everything to cli_main().
 #include <lock/cli.hpp>
 
+#include <lock/compress.hpp>
 #include <lock/constants.hpp>
 #include <lock/container.hpp>
 #include <lock/crypto.hpp>
@@ -40,6 +41,8 @@ struct ParsedArgs {
     uint32_t jobs         = 0;
     std::string output_dir;
     uint32_t chunk_size   = (uint32_t)DEFAULT_CHUNK_SIZE;
+    CompressionId compression      = CompressionId::NONE;
+    int            compression_level = 3;
     bool verbose          = false;
     bool quiet            = false;
     std::string error;
@@ -104,6 +107,29 @@ bool apply_flag_value(ParsedArgs& pa,
                             static_cast<uint32_t>(1024u * 1024u * 16u),
                             pa.chunk_size, pa);
     }
+    if (flag == "--compress") {
+        if (value == "none") { pa.compression = CompressionId::NONE; return true; }
+        if (value == "lz4")  { pa.compression = CompressionId::LZ4;  return true; }
+        if (value == "zstd") { pa.compression = CompressionId::ZSTD; return true; }
+        pa.error = "invalid --compress value '" + value + "' (must be: none|lz4|zstd)";
+        return false;
+    }
+    if (flag == "--level") {
+        // parse_uint32 doesn't handle signed integers in [1, 22]; use
+        // std::stoll for a small custom parse. Range check is explicit.
+        try {
+            long long L = std::stoll(value);
+            if (L < 1 || L > 22) {
+                pa.error = "flag --level value out of range [1, 22]";
+                return false;
+            }
+            pa.compression_level = static_cast<int>(L);
+            return true;
+        } catch (const std::exception&) {
+            pa.error = "flag --level requires an integer value";
+            return false;
+        }
+    }
     pa.error = "internal: unknown flag '" + flag + "'";
     return false;
 }
@@ -133,11 +159,23 @@ ParsedArgs parse_args(const std::vector<std::string>& args, size_t offset) {
             pa.password_env_var = true;
             continue;
         }
+        // Compression shorthand flags. Last-write-wins semantics: if -z,
+        // --fast, and/or --compress <algo> are all given, the last-seen
+        // flag decides pa.compression (no mutex error; user's responsibility).
+        if (tok == "-z") {
+            pa.compression = CompressionId::ZSTD;
+            continue;
+        }
+        if (tok == "--fast") {
+            pa.compression = CompressionId::LZ4;
+            continue;
+        }
 
         if (tok == "-p" || tok == "--password-file" ||
             tok == "-j" || tok == "--jobs" ||
             tok == "-o" || tok == "--output-dir" ||
-            tok == "--chunk-size") {
+            tok == "--chunk-size" ||
+            tok == "--compress" || tok == "--level") {
             if (i + 1 >= args.size()) {
                 pa.error = "flag " + tok + " requires a value";
                 break;
@@ -154,7 +192,8 @@ ParsedArgs parse_args(const std::vector<std::string>& args, size_t offset) {
             if (flag_name == "-p" || flag_name == "--password-file" ||
                 flag_name == "-j" || flag_name == "--jobs" ||
                 flag_name == "-o" || flag_name == "--output-dir" ||
-                flag_name == "--chunk-size") {
+                flag_name == "--chunk-size" ||
+                flag_name == "--compress" || flag_name == "--level") {
                 if (!apply_flag_value(pa, flag_name, value)) {
                     break;
                 }
@@ -197,6 +236,10 @@ void print_usage() {
         "  -j, --jobs <N>               Per-file worker threads (default: hardware_concurrency)\n"
         "  -o, --output-dir <dir>      Output directory (default: same dir as input file)\n"
         "      --chunk-size <bytes>     Encryption chunk size (default 1 MiB; >=4096 and /16)\n"
+        "      --compress <algo>          Compress before encrypt: none|lz4|zstd (default: none)\n"
+        "  -z                            Shorthand for --compress zstd (balanced)\n"
+        "      --fast                     Shorthand for --compress lz4 (fast, low ratio)\n"
+        "      --level <N>                Compression level: zstd 1..22 (default 3); lz4 ignores\n"
         "  -v, --verbose                Print extra status to stderr\n"
         "  -q, --quiet                  Suppress progress bars (errors still shown)\n"
         "      --version                Print version and exit\n"
@@ -232,6 +275,8 @@ struct EncryptCliArgs {
     uint32_t jobs         = 0;
     std::string output_dir;
     uint32_t chunk_size   = (uint32_t)DEFAULT_CHUNK_SIZE;
+    CompressionId compression      = CompressionId::NONE;
+    int            compression_level = 3;
     bool verbose          = false;
     bool quiet            = false;
 };
@@ -328,6 +373,8 @@ int run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
                 opts.kdf_p       = SCRYPT_DEFAULT_P;
                 opts.chunk_size  = args.chunk_size;
                 opts.num_threads = num_threads;
+                opts.compression       = args.compression;
+                opts.compression_level = args.compression_level;
                 opts.progress    = args.quiet
                                        ? ProgressCallback{}
                                        : tracker.make_callback(i, args.chunk_size);
@@ -558,6 +605,9 @@ int run_list(const std::vector<std::string>& files) {
             std::cout << "  original_size: " << h.original_size << " bytes\n";
             std::cout << "  chunk_size:    " << h.chunk_size << " bytes\n";
             std::cout << "  chunk_count:   " << h.chunk_count << "\n";
+            std::cout << "  compression:    "
+                      << compression_id_name(static_cast<CompressionId>(h.compression_id)) << "\n";
+            std::cout << "  stored_size:    " << h.stored_size << " bytes\n";
             std::cout << "  filename_len:  " << h.filename_len << "\n";
             std::cout << "  data_offset:   " << h.data_offset() << " bytes\n";
             std::uintmax_t total_size = std::filesystem::file_size(input);
@@ -649,6 +699,8 @@ int run_interactive(std::vector<std::string> /*rest*/) {
             eargs.chunk_size    = (uint32_t)DEFAULT_CHUNK_SIZE;
             eargs.jobs          = 0;
             eargs.quiet         = true;
+            eargs.compression       = CompressionId::NONE;
+            eargs.compression_level = 3;
             (void)run_encrypt(eargs, etracker);
         } else {
             DecryptCliArgs dargs;
@@ -751,6 +803,8 @@ int cli_main(int argc, char** argv) {
         eargs.chunk_size    = pa.chunk_size;
         eargs.verbose       = pa.verbose;
         eargs.quiet         = pa.quiet;
+        eargs.compression       = pa.compression;
+        eargs.compression_level = pa.compression_level;
         return run_encrypt(eargs, tracker);
     }
     if (cmd == "decrypt") {
