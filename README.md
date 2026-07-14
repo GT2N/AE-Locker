@@ -61,6 +61,61 @@ cmake --build build          # 增量编译
 ./build/lock encrypt a.txt b.txt c.txt -j 8
 ```
 
+## 本地化 (Locale / Language)
+
+`lock` 内置中英双语支持。语言按以下优先级自动检测，可用 `--lang` 强制覆盖；全程无第三方 i18n 库依赖。
+
+| 优先级 | 来源                              | 备注                                                  |
+|:------:|:----------------------------------|:-----------------------------------------------------|
+|   1    | `--lang zh\|en`（命令行任意位置） | 显式最高优先级；后出现的值会覆盖前者                   |
+|   2    | `$LC_ALL`                         | 形如 `zh_CN.UTF-8` → zh；不含 `zh` 字串 → en          |
+|   3    | `$LC_MESSAGES`                    | 同上                                                 |
+|   4    | `$LANG`                           | 同上                                                 |
+| (默认) | 均未设置                          | 英语 (en)                                             |
+
+`-v` / `--verbose` 会向 stderr 打印一行探测信息：
+
+```
+[lang] detected=zh effective=zh (env: LANG=zh_CN.UTF-8)
+```
+
+颜色输出（错误前缀、进度条填充、密码提示等）遵守 `NO_COLOR` / `CLICOLOR=0` / 终端 tty 检测，亦可用 `--no-color` 全量关闭（也包括进度条 ANSI 光标控制与画面重绘）。`--no-color` 模式下进度条退化为每文件一次的纯文本 stderr 行，便于管道捕获或脚本集成。
+
+`-q` / `--quiet` 仅抑制进度条，错误仍照常输出。
+
+### 用法示例
+
+```bash
+# 中文本地化（CLI 提示、帮助、进度、错误信息）
+./build/lock --lang zh encrypt secret.txt
+
+# 仅影响本次运行的环境变量路由
+LC_ALL=zh_CN.UTF-8 ./build/lock encrypt secret.txt
+
+# 显示语言探测行
+./build/lock encrypt secret.txt -v
+
+# 关掉彩色与光标 ANSI
+./build/lock --no-color encrypt secret.txt -o ./out/
+
+# 管道模式：自动检测 stdin 是否为 tty，非 tty 时不关回显
+printf 'pw\npw\n' | ./build/lock encrypt secret.txt
+```
+
+### 退出代码表
+
+`cli_main` 仍只暴露 `int` 返回值（公开签名不变），但内部按场景分别返回以下退出码：
+
+| 退出码 | 含义                                                           | 触发场景                                                                          |
+|:-----:|:---------------------------------------------------------------|:--------------------------------------------------------------------------------|
+|   0   | 成功 (Ok)                                                       | 加密/解密/list 正常完成                                                           |
+|   2   | 参数错误 (Arg)                                                  | 未知命令 / 缺少 flag 值 / 不支持的 flag 值（`--lang fr` / `--compress bogus` 等）/ 密码不匹配、空密码 / 无可加密文件 / 无输入文件 / `--max-depth` 未与 `--auto` 一起用 / `--auto` 给的目录不存在 |
+|   3   | I/O 错误 / 输入文件已存在 (Io)                                  | 目标 `.locked` 文件已存在（不覆盖护栏）/ 目录创建失败 / 文件不可读                |
+|   4   | 密钥派生 / 认证失败 (Auth)                                      | 解密时密码错（HMAC 校验失败 / 文件被篡改 / salt 不匹配）                          |
+|   5   | 内部不可恢复错误 (Internal)                                      | 异常落到 `cli_main` 顶层兜底分支                                                 |
+
+`lock list` 子命令即使对"不是 `.locked` 文件"的入参也返回 0（仅打印提示），不影响脚本以退出码聚合判断其他子命令的成功/失败。
+
 ## 批量目录加密/解密（`--auto`)
 
 `--auto <dir>` 进入批量模式：递归扫描指定目录中的所有常规文件,镜像源目录的子目录结构落到 `-o/--output-dir` 下,避免不同子目录中同名文件冲突。
@@ -126,6 +181,8 @@ Options:
       --level <N>                Compression level: zstd 1..22 (default 3); lz4 ignores
   -v, --verbose                额外状态打到 stderr
   -q, --quiet                  关闭进度条（错误仍输出）
+      --lang <en|zh>           覆盖语言探测；可在子命令前/后任意位置出现
+      --no-color               关闭彩色与进度条 ANSI 光标控制（NO_COLOR / CLICOLOR=0 亦生效）
       --version                打印版本
   -h, --help                   打印帮助
 ```
