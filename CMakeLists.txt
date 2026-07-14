@@ -114,6 +114,45 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(indicators)
 
 # -----------------------------------------------------------------------------
+# lz4 v1.9.4 (static) via FetchContent.
+# -----------------------------------------------------------------------------
+FetchContent_Declare(
+    lz4
+    GIT_REPOSITORY https://github.com/lz4/lz4.git
+    GIT_TAG        v1.9.4
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  build/cmake
+)
+set(LZ4_BUILD_CLI          OFF CACHE BOOL "" FORCE)
+set(LZ4_BUILD_LEGACY_LZ4C  OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(lz4)
+# lz4 v1.9.4's CMakeLists.txt defines `lz4_static` and `lz4_shared` (not a
+# bare `lz4` target), and exposes no `lz4::lz4` alias until v1.10.0.  Under
+# FetchContent the project is bundled, so BUILD_SHARED_LIBS defaults OFF and
+# BUILD_STATIC_LIBS defaults ON -- only `lz4_static` is created.  Create the
+# namespaced alias against `lz4_static` so consumers can link `lz4::lz4`.
+if(NOT TARGET lz4::lz4)
+    add_library(lz4::lz4 ALIAS lz4_static)
+endif()
+
+# -----------------------------------------------------------------------------
+# zstd v1.5.7 (static) via FetchContent.
+# -----------------------------------------------------------------------------
+FetchContent_Declare(
+    zstd
+    URL https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
+    SOURCE_SUBDIR build/cmake
+)
+set(ZSTD_BUILD_STATIC    ON  CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED    OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_PROGRAMS  OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB   OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS     OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(zstd)
+# The static lib target produced by zstd's CMake is `libzstd_static`.  It does
+# NOT define a `zstd::zstd` alias, so we link directly to `libzstd_static`.
+
+# -----------------------------------------------------------------------------
 # Export compile commands for clangd / IDE tooling.
 # -----------------------------------------------------------------------------
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -136,6 +175,7 @@ set(LOCK_SOURCES
     src/main.cpp
     src/cli.cpp
     src/crypto.cpp
+    src/compress.cpp
     src/container.cpp
     src/kdf.cpp
     src/progress.cpp
@@ -155,6 +195,8 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
         Threads::Threads
         OpenSSL::Crypto
         OpenSSL::SSL
+        lz4::lz4
+        libzstd_static
     )
 
     target_compile_features(lock PRIVATE cxx_std_20)
@@ -165,6 +207,8 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
     # emitted from inside indicators headers are suppressed entirely.
     target_include_directories(lock SYSTEM PRIVATE
         ${indicators_SOURCE_DIR}/include
+        ${lz4_SOURCE_DIR}/lib             # for lz4.h (lz4 path is ../lib)
+        ${zstd_SOURCE_DIR}/lib            # for zstd.h
     )
 
     target_include_directories(lock PRIVATE
