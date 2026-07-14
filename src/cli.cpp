@@ -8,6 +8,7 @@
 #include <lock/container.hpp>
 #include <lock/crypto.hpp>
 #include <lock/kdf.hpp>
+#include <lock/memory.hpp>
 #include <lock/progress.hpp>
 #include <lock/safe.hpp>
 
@@ -39,8 +40,10 @@ struct ParsedArgs {
     bool password_env_var = false;
     bool no_safe          = false;
     uint32_t jobs         = 0;
+    bool jobs_explicit    = false;
     std::string output_dir;
     uint32_t chunk_size   = (uint32_t)DEFAULT_CHUNK_SIZE;
+    bool chunk_size_explicit = false;
     CompressionId compression      = CompressionId::NONE;
     int            compression_level = 3;
     bool verbose          = false;
@@ -100,12 +103,20 @@ bool apply_flag_value(ParsedArgs& pa,
         return true;
     }
     if (flag == "-j" || flag == "--jobs") {
-        return parse_uint32(flag, value, 1u, 1024u, pa.jobs, pa);
+        if (parse_uint32(flag, value, 1u, 1024u, pa.jobs, pa)) {
+            pa.jobs_explicit = true;
+            return true;
+        }
+        return false;
     }
     if (flag == "--chunk-size") {
-        return parse_uint32(flag, value, 4096u,
-                            static_cast<uint32_t>(1024u * 1024u * 16u),
-                            pa.chunk_size, pa);
+        if (parse_uint32(flag, value, 4096u,
+                         static_cast<uint32_t>(1024u * 1024u * 16u),
+                         pa.chunk_size, pa)) {
+            pa.chunk_size_explicit = true;
+            return true;
+        }
+        return false;
     }
     if (flag == "--compress") {
         if (value == "none") { pa.compression = CompressionId::NONE; return true; }
@@ -257,11 +268,6 @@ std::string to_hex(const unsigned char* p, size_t n) {
     return out;
 }
 
-uint32_t default_jobs() {
-    auto hc = std::thread::hardware_concurrency();
-    return (hc == 0) ? 1u : static_cast<uint32_t>(hc);
-}
-
 // ---------------------------------------------------------------------------
 // Encrypt orchestration: 1 password acquisition, shared salt/iv/key-material,
 // one std::thread per input file (inter-file parallelism), each of which calls
@@ -273,8 +279,10 @@ struct EncryptCliArgs {
     std::string password_file;
     bool no_safe          = false;
     uint32_t jobs         = 0;
+    bool jobs_explicit    = false;
     std::string output_dir;
     uint32_t chunk_size   = (uint32_t)DEFAULT_CHUNK_SIZE;
+    bool chunk_size_explicit = false;
     CompressionId compression      = CompressionId::NONE;
     int            compression_level = 3;
     bool verbose          = false;
@@ -336,6 +344,14 @@ int run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
         tracker.start(args.files.size());
     }
 
+    // Detect system memory once for the whole invocation — it does not vary
+    // between input files, only the per-file size influences chunk_size.
+    lock::memory_status ms = lock::detect_memory();
+    unsigned hw = std::thread::hardware_concurrency();
+    if (hw == 0u) {
+        hw = 1u;
+    }
+
     std::vector<std::thread> workers;
     workers.reserve(args.files.size());
     std::atomic<size_t> files_done{0};
@@ -346,9 +362,36 @@ int run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
         const std::string& input    = args.files[i];
         const std::filesystem::path& output_path = output_paths[i];
 
-        uintmax_t file_size = std::filesystem::file_size(input);
-        uintmax_t cs = static_cast<uintmax_t>(args.chunk_size);
-        uintmax_t chunks = (file_size + cs - 1) / cs;
+        size_t file_size =
+            static_cast<size_t>(std::filesystem::file_size(input));
+        size_t cs = lock::recommend_chunk_size(
+            ms.available_bytes,
+            args.chunk_size_explicit ? static_cast<size_t>(args.chunk_size) : 0u,
+            file_size);
+        // memory module clamps cs to [256 KiB, 4 MiB] which is well inside
+        // the uint32 range and the cli's 4096..16 MiB / %-16 validation;
+        // still narrow consciously.
+        uint32_t chunk_size_u32 =
+            (cs > static_cast<size_t>(UINT32_MAX))
+                ? UINT32_MAX
+                : static_cast<uint32_t>(cs);
+
+        unsigned jobs = lock::recommend_jobs(
+            args.jobs_explicit ? static_cast<unsigned>(args.jobs) : 0u,
+            ms.available_bytes, cs, hw);
+
+        if (args.verbose) {
+            std::cerr << "[memory] available=" << (ms.available_bytes / 1024 / 1024)
+                      << " MiB; chunk_size=" << (cs / 1024) << " KiB; jobs="
+                      << jobs
+                      << (args.chunk_size_explicit ? " (chunk_size explicit)" : "")
+                      << (args.jobs_explicit ? " (jobs explicit)" : "")
+                      << "\n";
+        }
+
+        uintmax_t chunks =
+            (static_cast<uintmax_t>(file_size) + chunk_size_u32 - 1u) /
+            chunk_size_u32;
         size_t total_chunks = static_cast<size_t>(chunks);
 
         if (!args.quiet) {
@@ -356,13 +399,12 @@ int run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
                                total_chunks);
         }
 
-        uint32_t num_threads = (args.jobs == 0) ? default_jobs() : args.jobs;
-
         workers.emplace_back(
             [&, i, input, output_path,
              file_key    = km.file_key,
              hmac_key    = km.hmac_key,
-             salt, base_iv, num_threads]() {
+             salt, base_iv,
+             chunk_size_u32, jobs]() {
                 EncryptOptions opts;
                 opts.file_key    = file_key;
                 opts.hmac_key    = hmac_key;
@@ -371,13 +413,14 @@ int run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
                 opts.kdf_N       = static_cast<uint32_t>(SCRYPT_DEFAULT_N);
                 opts.kdf_r       = SCRYPT_DEFAULT_R;
                 opts.kdf_p       = SCRYPT_DEFAULT_P;
-                opts.chunk_size  = args.chunk_size;
-                opts.num_threads = num_threads;
+                opts.chunk_size  = chunk_size_u32;
+                opts.num_threads = jobs;
                 opts.compression       = args.compression;
                 opts.compression_level = args.compression_level;
                 opts.progress    = args.quiet
                                        ? ProgressCallback{}
-                                       : tracker.make_callback(i, args.chunk_size);
+                                       : tracker.make_callback(i,
+                                           static_cast<size_t>(chunk_size_u32));
                 try {
                     encrypt_file(input, output_path.string(),
                                  std::filesystem::path(input).filename().string(),
@@ -421,7 +464,10 @@ struct DecryptCliArgs {
     std::string password_file;
     bool no_safe          = false;
     uint32_t jobs         = 0;
+    bool jobs_explicit    = false;
     std::string output_dir;
+    uint32_t chunk_size   = (uint32_t)DEFAULT_CHUNK_SIZE;
+    bool chunk_size_explicit = false;
     bool verbose          = false;
     bool quiet            = false;
 };
@@ -456,6 +502,14 @@ int run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
         tracker.start(args.files.size());
     }
 
+    // Detect system memory once for the whole invocation. The per-file file
+    // system size is the input signal to recommend_chunk_size/recommend_jobs.
+    lock::memory_status ms = lock::detect_memory();
+    unsigned hw = std::thread::hardware_concurrency();
+    if (hw == 0u) {
+        hw = 1u;
+    }
+
     std::vector<std::thread> workers;
     workers.reserve(args.files.size());
     std::atomic<size_t> files_done{0};
@@ -465,8 +519,27 @@ int run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
     for (size_t i = 0; i < args.files.size(); ++i) {
         const std::string& input = args.files[i];
 
+        size_t file_size =
+            static_cast<size_t>(std::filesystem::file_size(input));
+        size_t cs = lock::recommend_chunk_size(
+            ms.available_bytes,
+            args.chunk_size_explicit ? static_cast<size_t>(args.chunk_size) : 0u,
+            file_size);
+        unsigned jobs = lock::recommend_jobs(
+            args.jobs_explicit ? static_cast<unsigned>(args.jobs) : 0u,
+            ms.available_bytes, cs, hw);
+
+        if (args.verbose) {
+            std::cerr << "[memory] available=" << (ms.available_bytes / 1024 / 1024)
+                      << " MiB; chunk_size=" << (cs / 1024) << " KiB; jobs="
+                      << jobs
+                      << (args.chunk_size_explicit ? " (chunk_size explicit)" : "")
+                      << (args.jobs_explicit ? " (jobs explicit)" : "")
+                      << "\n";
+        }
+
         workers.emplace_back(
-            [&, i, input, password = pw.password]() {
+            [&, i, input, password = pw.password, jobs]() {
                 try {
                     std::ifstream in(input, std::ios::binary);
                     in.exceptions(std::ios::goodbit);
@@ -525,9 +598,9 @@ int run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
                             "'" + output_path.string() + "' already exists");
                     }
 
-                    uintmax_t cs = static_cast<uintmax_t>(header.chunk_size);
+                    uintmax_t header_cs = static_cast<uintmax_t>(header.chunk_size);
                     uintmax_t chunks =
-                        (header.original_size + cs - 1) / cs;
+                        (header.original_size + header_cs - 1) / header_cs;
                     size_t total_chunks = static_cast<size_t>(chunks);
 
                     if (!args.quiet) {
@@ -535,13 +608,10 @@ int run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
                                           total_chunks);
                     }
 
-                    uint32_t num_threads =
-                        (args.jobs == 0) ? default_jobs() : args.jobs;
-
                     DecryptOptions opts;
                     opts.file_key    = km.file_key;
                     opts.hmac_key    = km.hmac_key;
-                    opts.num_threads = num_threads;
+                    opts.num_threads = jobs;
                     opts.progress    = args.quiet
                                            ? ProgressCallback{}
                                            : tracker.make_callback(i,
@@ -799,8 +869,10 @@ int cli_main(int argc, char** argv) {
         eargs.password_file = pa.password_file;
         eargs.no_safe       = pa.no_safe;
         eargs.jobs          = pa.jobs;
+        eargs.jobs_explicit = pa.jobs_explicit;
         eargs.output_dir    = pa.output_dir;
         eargs.chunk_size    = pa.chunk_size;
+        eargs.chunk_size_explicit = pa.chunk_size_explicit;
         eargs.verbose       = pa.verbose;
         eargs.quiet         = pa.quiet;
         eargs.compression       = pa.compression;
@@ -815,7 +887,10 @@ int cli_main(int argc, char** argv) {
         dargs.password_file = pa.password_file;
         dargs.no_safe       = pa.no_safe;
         dargs.jobs          = pa.jobs;
+        dargs.jobs_explicit = pa.jobs_explicit;
         dargs.output_dir    = pa.output_dir;
+        dargs.chunk_size    = pa.chunk_size;
+        dargs.chunk_size_explicit = pa.chunk_size_explicit;
         dargs.verbose       = pa.verbose;
         dargs.quiet         = pa.quiet;
         return run_decrypt(dargs, tracker);
