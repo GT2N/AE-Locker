@@ -16,7 +16,9 @@ namespace lock {
 // Progress callback: (bytes_processed_so_far, total_bytes).
 // Called from *worker threads*; the subscriber MUST be thread-safe
 // (use atomics or a mutex internally). The crypto module does no
-// marshalling — every chunk boundary may invoke this from any worker.
+// marshalling — the encrypt / decrypt pipelines invoke this from their
+// writer thread (and, in the empty-file case, from the main thread before
+// the pipeline starts).
 using ProgressCallback = std::function<void(size_t bytes_done, size_t total)>;
 
 // Encrypt the plaintext filename with AES-256-GCM. The result populates
@@ -180,26 +182,40 @@ struct EncryptOptions {
 // HMAC covers `header_serialised || concatenated_chunk_ciphertext ||
 // offset_table_bytes` (everything from byte 0 up to the start of the footer).
 // For CompressionId::NONE the offset table is still emitted (single read
-// path). The HMAC is computed single-threaded after every worker has joined,
-// so it never races with chunk encryption.
+// path). The HMAC is fed by a single StreamingHmac on the writer thread,
+// in strict on-disk (chunk_index) order, so it never races with chunk
+// encryption — the offset table bytes are appended by the main thread after
+// the writer joins.
 //
-// Threading model:
-//   - Reads the whole input file into RAM (caps at 64 GiB for safety).
-//   - Spawns min(num_threads, chunk_count) worker threads.
-//   - Each worker owns its own EVP_CIPHER_CTX (NEVER shared — OpenSSL
-//     contexts are not thread-safe) and pulls chunk indices off an atomic
-//     counter until exhausted.
-//   - Workers compress (if enabled) then CTR-encrypt each chunk into a
-//     thread-local std::vector<unsigned char>; results are moved into a
-//     `std::vector<std::vector<unsigned char>> ct_per_chunk(chunk_count)`
-//     indexed by chunk_index. Each index is dispatched to exactly one
-//     worker, so ct_per_chunk[i] is written exactly once (no mutex needed
-//     for the writes — only the existing err_mutex error channel).
-//   - Progress is reported in PLAINTEXT bytes per chunk (not compressed
-//     bytes) so the user-visible rate matches the file they handed us.
-//   - Errors inside workers are captured in a std::atomic<bool> + a
-//     mutex-guarded std::string and rethrown from the main thread after
-//     join() — no exception ever crosses a thread boundary.
+// Streaming pipeline (no whole-file buffer):
+//   - stat() the input file to learn its size; chunk_count derived from
+//     that. The plaintext is NEVER read into RAM as a single slab.
+//   - Thread A (reader + compressor): one chunk_size read at a time from
+//     the input ifstream; compress_chunk (thread_local ZSTD_CCtx inside
+//     compress_chunk) then push {i, compressed} onto a bounded blocking
+//     queue (capacity num_threads + 1). This backpressure — at most
+//     (num_threads + 1) chunk-sized buffers can be in flight at once —
+//     is what bounds peak RAM to O(num_threads * chunk_size), independent
+//     of file size.
+//   - Thread B (writer + encryptor + streaming HMAC): pop {i, compressed}
+//     in chunk_index order, derive iv_v2 with prefix-CT bytes, CTR-encrypt
+//     on the thread's long-lived EVP_CIPHER_CTX, write the CT to the
+//     output fstream (positioned at data_offset), update the streaming
+//     HMAC, record ct_per_chunk_size[i], and fire progress() in PT bytes.
+//     The CT write + HMAC update order is by construction the on-disk
+//     chunk_index order, so the streaming HMAC matches the bytes a decrypt
+//     will reproduce in the same order.
+//   - After the pipeline joins: re-serialise the FINAL FileHeader (with
+//     stored_size filled in), seekp(0) + overwrite the header bytes, run
+//     HMAC.update over those final header bytes, seekp(end) + write the
+//     offset table (chunk_count * be32), HMAC.update over it, then append
+//     the final HMAC footer. The output file is thus bit-for-bit identical
+//     to what the legacy whole-file encoder produced, so existing v2 files
+//     and existing decrypt paths are unchanged.
+//   - Errors inside either pipeline thread are captured in a
+//     std::atomic<bool> + mutex-guarded std::string (CAS-first) and
+//     rethrown from the main thread after join() — no exception ever
+//     crosses a thread boundary. The partial output file is unlinked.
 void encrypt_file(const std::string& input_path,
                   const std::string& output_path,
                   std::string_view original_filename_for_header,
@@ -224,18 +240,39 @@ struct DecryptOptions {
 //     v2: offset_table_size = chunk_count * 4, ct_total_size =
 //         stored_size - offset_table_size. The offset table is read off disk
 //         and its entries sum-checked against ct_total_size.
-// - Reads the ciphertext region into RAM, then (v2 only) the offset table.
-// - Reads the trailing 32-byte HMAC footer and verifies it against
-//   HMAC(hmac_key, header_serialised || ct_region || offset_table_bytes).
-//   For v1 there is no offset table, so the HMAC inputs are
-//   header_serialised || ct_region — exactly what the v1 encrypt wrote.
-//   Mismatch -> throw std::runtime_error (truncation / tamper detected
-//   before any plaintext is written to disk).
-// - Parallel-decrypts the chunks (per-thread EVP_CIPHER_CTX, atomic chunk
-//   dispatch, error capture via atomic + mutex). Each chunk is CTR-decrypted
-//   to its "compressed plaintext" then (if compression_id != NONE) passed
-//   through decompress_chunk before being written to its slot in pt_buffer.
-// - Writes the resulting plaintext to `output_path`.
+// - Sanity ceilings (not the legacy 64 GiB hard cap): chunk_count,
+//   original_size, and stored_size each have a value cap far above any
+//   real-world file (1e9 chunks / 64 PiB) so a malicious header can't
+//   force a multi-GiB offset-table allocation. Peak RAM is O(num_threads
+//   * chunk_size), independent of file size — there is no whole-file
+//   buffer.
+// - Reads the per-chunk sizes up-front (v2: trailing offset table on
+//   disk; v1: synthesised from original_size).
+// - Reads the trailing 32-byte HMAC footer BEFORE the streaming pipeline
+//   starts so it is available for compare once the final HMAC is computed.
+// - Streaming pipeline:
+//   * Thread A (reader):  sequentially reads the ciphertext for chunk i
+//     (offsets[i] bytes from the ifstream) and pushes { i, ct } onto a
+//     bounded read queue (backpressure -> bounded RAM).
+//   * N worker threads:  pop { i, ct }, CTR-decrypt into compressed-PT
+//     using a thread_local long-lived EVP_CIPHER_CTX (CTR re-init per
+//     chunk), decompress_chunk into expected_pt, then push { i, pt, ct }
+//     onto a bounded write queue. The IV uses derive_chunk_iv for v1
+//     (legacy) or derive_chunk_iv_v2 with the prefix-CT sum for v2 —
+//     EXACTLY what encrypt_file used to derive the same IV.
+//   * Thread B (writer):  drains the write queue in strict chunk_index
+//     order (an in-memory reorder map decouples worker completion order
+//     from on-disk write order); writes pt to the .tmp file sequentially,
+//     and feeds the chunk's CT (in the same on-disk order encrypt wrote
+//     it) into the single StreamingHmac.
+// - After the pipeline joins, the main thread appends the offset table
+//   bytes (v2 only) to the streaming HMAC, finalises it, and does a
+//   constant-time CRYPTO_memcmp against the stored footer.
+//   * Match:  flush + close the .tmp; atomically rename(tmp -> output_path).
+//     The .tmp lives in the SAME directory as output_path so the rename
+//     stays same-filesystem (POSIX-atomic).
+//   * Mismatch (truncation / tamper): close the .tmp, unlink it, throw
+//     std::runtime_error. The final destination is never created.
 void decrypt_file(const std::string& input_path,
                   const std::string& output_path,
                   const DecryptOptions& opts);
