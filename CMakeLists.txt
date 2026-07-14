@@ -182,6 +182,7 @@ set(LOCK_SOURCES
     src/progress.cpp
     src/safe.cpp
     src/term.cpp
+    src/i18n.cpp
 )
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
