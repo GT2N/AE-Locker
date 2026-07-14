@@ -1,0 +1,17 @@
+# Build artifacts
+/build/
+/compile_commands.json
+
+# Encrypted test outputs (any local .locked file)
+*.locked
+
+# IDE / editor caches
+/.vscode/
+/.idea/
+/.cache/
+*.swp
+*.swo
+.DS_Store
+
+# Sisyphus agent scratch (run-continuation state, etc.)
+/.sisyphus/
