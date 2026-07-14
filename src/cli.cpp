@@ -16,6 +16,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -28,6 +29,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace lock {
@@ -48,6 +50,13 @@ struct ParsedArgs {
     int            compression_level = 3;
     bool verbose          = false;
     bool quiet            = false;
+    // --auto <dir>: batch mode directory scan.
+    bool auto_mode        = false;
+    bool auto_seen        = false;  // for "specified more than once" detection
+    std::string auto_dir;
+    // --max-depth <N>: -1 = unlimited (default); 0 = top files only;
+    // 1 = top + one subdir; etc.
+    int32_t max_depth     = -1;
     std::string error;
 };
 
@@ -141,6 +150,30 @@ bool apply_flag_value(ParsedArgs& pa,
             return false;
         }
     }
+    if (flag == "--auto") {
+        if (pa.auto_seen) {
+            pa.error = "--auto specified more than once";
+            return false;
+        }
+        pa.auto_mode = true;
+        pa.auto_seen = true;
+        pa.auto_dir  = value;
+        return true;
+    }
+    if (flag == "--max-depth") {
+        try {
+            long long v = std::stoll(value);
+            if (v < -1 || v > 65535) {
+                pa.error = "--max-depth must be >= -1 (-1 means unlimited)";
+                return false;
+            }
+            pa.max_depth = static_cast<int32_t>(v);
+            return true;
+        } catch (const std::exception&) {
+            pa.error = "--max-depth must be >= -1 (-1 means unlimited)";
+            return false;
+        }
+    }
     pa.error = "internal: unknown flag '" + flag + "'";
     return false;
 }
@@ -186,7 +219,8 @@ ParsedArgs parse_args(const std::vector<std::string>& args, size_t offset) {
             tok == "-j" || tok == "--jobs" ||
             tok == "-o" || tok == "--output-dir" ||
             tok == "--chunk-size" ||
-            tok == "--compress" || tok == "--level") {
+            tok == "--compress" || tok == "--level" ||
+            tok == "--auto" || tok == "--max-depth") {
             if (i + 1 >= args.size()) {
                 pa.error = "flag " + tok + " requires a value";
                 break;
@@ -204,7 +238,8 @@ ParsedArgs parse_args(const std::vector<std::string>& args, size_t offset) {
                 flag_name == "-j" || flag_name == "--jobs" ||
                 flag_name == "-o" || flag_name == "--output-dir" ||
                 flag_name == "--chunk-size" ||
-                flag_name == "--compress" || flag_name == "--level") {
+                flag_name == "--compress" || flag_name == "--level" ||
+                flag_name == "--auto" || flag_name == "--max-depth") {
                 if (!apply_flag_value(pa, flag_name, value)) {
                     break;
                 }
@@ -237,7 +272,9 @@ void print_usage() {
         "\n"
         "Commands:\n"
         "  encrypt    Encrypt one or more files into .locked containers\n"
+        "             (supports --auto <dir> for recursive directory batch mode)\n"
         "  decrypt    Decrypt one or more .locked containers\n"
+        "             (supports --auto <dir> for recursive directory batch mode)\n"
         "  list       Print the metadata of a .locked container without decrypting\n"
         "\n"
         "Options:\n"
@@ -245,12 +282,18 @@ void print_usage() {
         "      --password-env-var       Read password from $LOCK_PASSWORD (requires --no-safe)\n"
         "      --no-safe                Acknowledge unsafe password sources\n"
         "  -j, --jobs <N>               Per-file worker threads (default: hardware_concurrency)\n"
-        "  -o, --output-dir <dir>      Output directory (default: same dir as input file)\n"
+        "  -o, --output-dir <dir>      Output directory (default: same dir as input file).\n"
+        "                               In --auto mode this becomes the root of the mirrored\n"
+        "                               source subdirectory tree (must be explicit).\n"
         "      --chunk-size <bytes>     Encryption chunk size (default 1 MiB; >=4096 and /16)\n"
         "      --compress <algo>          Compress before encrypt: none|lz4|zstd (default: none)\n"
         "  -z                            Shorthand for --compress zstd (balanced)\n"
         "      --fast                     Shorthand for --compress lz4 (fast, low ratio)\n"
         "      --level <N>                Compression level: zstd 1..22 (default 3); lz4 ignores\n"
+        "      --auto <dir>              Batch mode: recursively scan <dir>.\n"
+        "                               Requires -o/--output-dir. Exclusive with positional files.\n"
+        "      --max-depth <N>           --auto recursion depth: -1 = unlimited (default),\n"
+        "                               0 = only direct files of --auto dir, 1 = +1 subdir, etc.\n"
         "  -v, --verbose                Print extra status to stderr\n"
         "  -q, --quiet                  Suppress progress bars (errors still shown)\n"
         "      --version                Print version and exit\n"
@@ -266,6 +309,167 @@ std::string to_hex(const unsigned char* p, size_t n) {
         out.push_back(digits[p[i] & 0x0F]);
     }
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// --auto batch mode helpers: recursive directory walk returning
+//   (input_abs_path, relative_path_under.auto_dir)
+// for each eligible file. rel_tail is "" if the file sits directly in dir
+// (i.e. depth 0). Otherwise it carries the sub-path including the file name,
+// e.g. "sub/foo.txt" or "sub/foo.txt.locked".
+//
+// Skip rules:
+//   - symlink (is_symlink) — prevents cycles and traversal surprises.
+//   - non-regular files (sockets/devices/fifos/dirs themselves).
+//   - On encrypt: any file whose name ends in .locked (avoids double-encrypt
+//     of our own product when the output dir happens to overlap the source).
+//   - On decrypt: only files ending in .locked are collected.
+//
+// Depth semantics:
+//   max_depth == -1  unlimited
+//   max_depth ==  0  only direct children (entries of --auto dir itself)
+//   max_depth ==  1  + one layer of subdirs
+//   ...
+// A directory's own entries live at depth d+1 of the directory's depth d.
+// ---------------------------------------------------------------------------
+
+std::string rel_path_under(const std::filesystem::path& root,
+                          const std::filesystem::path& p) {
+    std::error_code rec_ec;
+    std::filesystem::path r = std::filesystem::relative(p, root, rec_ec);
+    if (rec_ec) {
+        return std::string();
+    }
+    std::string s = r.string();
+    if (s == ".") {
+        return std::string();
+    }
+    return s;
+}
+
+// Returns 0 on success and populates out_files; non-zero on unrecoverable
+// file-system errors. An empty result with rc 0 indicates "no eligible
+// files found".
+int collect_encrypt_inputs(const std::string& auto_dir_in,
+                           int32_t max_depth,
+                           std::vector<std::pair<std::string,
+                                                 std::string>>& out_files) {
+    std::error_code ec;
+    std::filesystem::path root = std::filesystem::weakly_canonical(
+        std::filesystem::path(auto_dir_in), ec);
+    if (ec) {
+        return 1;
+    }
+    using E = std::pair<std::filesystem::path, int>;  // (absolute dir, depth)
+    std::deque<E> q;
+    q.push_back({root, 0});
+
+    while (!q.empty()) {
+        E cur = q.front();
+        q.pop_front();
+        const std::filesystem::path& cur_dir = cur.first;
+        int cur_depth = cur.second;
+
+        std::error_code iter_ec;
+        std::filesystem::directory_iterator it(cur_dir,
+            std::filesystem::directory_options::skip_permission_denied,
+            iter_ec);
+        if (iter_ec) {
+            return 1;
+        }
+        for (auto it_end = std::filesystem::directory_iterator();
+             it != it_end; it.increment(iter_ec)) {
+            if (iter_ec) {
+                return 1;
+            }
+            const std::filesystem::directory_entry& de = *it;
+            std::error_code st_ec;
+            std::filesystem::path p = de.path();
+            if (de.is_symlink(st_ec)) {
+                continue;
+            }
+            if (de.is_regular_file(st_ec)) {
+                std::string name = p.filename().string();
+                if (name.size() >= 7u &&
+                    name.compare(name.size() - 7u, 7u, LOCKED_EXTENSION) == 0) {
+                    continue;
+                }
+                std::string rel = rel_path_under(root, p);
+                out_files.emplace_back(p.string(), rel);
+            } else if (de.is_directory(st_ec)) {
+                if (max_depth == -1 || cur_depth + 1 <= max_depth) {
+                    std::error_code st2_ec;
+                    std::filesystem::path canon = std::filesystem::canonical(p, st2_ec);
+                    if (st2_ec) {
+                        canon = p;
+                    }
+                    q.push_back({canon, cur_depth + 1});
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+int collect_decrypt_inputs(const std::string& auto_dir_in,
+                           int32_t max_depth,
+                           std::vector<std::pair<std::string,
+                                                 std::string>>& out_files) {
+    std::error_code ec;
+    std::filesystem::path root = std::filesystem::weakly_canonical(
+        std::filesystem::path(auto_dir_in), ec);
+    if (ec) {
+        return 1;
+    }
+    using E = std::pair<std::filesystem::path, int>;
+    std::deque<E> q;
+    q.push_back({root, 0});
+
+    while (!q.empty()) {
+        E cur = q.front();
+        q.pop_front();
+        const std::filesystem::path& cur_dir = cur.first;
+        int cur_depth = cur.second;
+
+        std::error_code iter_ec;
+        std::filesystem::directory_iterator it(cur_dir,
+            std::filesystem::directory_options::skip_permission_denied,
+            iter_ec);
+        if (iter_ec) {
+            return 1;
+        }
+        for (auto it_end = std::filesystem::directory_iterator();
+             it != it_end; it.increment(iter_ec)) {
+            if (iter_ec) {
+                return 1;
+            }
+            const std::filesystem::directory_entry& de = *it;
+            std::error_code st_ec;
+            std::filesystem::path p = de.path();
+            if (de.is_symlink(st_ec)) {
+                continue;
+            }
+            if (de.is_regular_file(st_ec)) {
+                std::string name = p.filename().string();
+                if (name.size() < 7u ||
+                    name.compare(name.size() - 7u, 7u, LOCKED_EXTENSION) != 0) {
+                    continue;
+                }
+                std::string rel = rel_path_under(root, p);
+                out_files.emplace_back(p.string(), rel);
+            } else if (de.is_directory(st_ec)) {
+                if (max_depth == -1 || cur_depth + 1 <= max_depth) {
+                    std::error_code st2_ec;
+                    std::filesystem::path canon = std::filesystem::canonical(p, st2_ec);
+                    if (st2_ec) {
+                        canon = p;
+                    }
+                    q.push_back({canon, cur_depth + 1});
+                }
+            }
+        }
+    }
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +491,9 @@ struct EncryptCliArgs {
     int            compression_level = 3;
     bool verbose          = false;
     bool quiet            = false;
+    bool   auto_mode      = false;
+    std::string auto_dir;
+    int32_t max_depth     = -1;
 };
 
 int run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
@@ -312,36 +519,88 @@ int run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
     ScryptParams sp{};
     auto km = derive_key_scrypt(pw.password, salt, sp);
 
+    // --auto scans args.auto_dir and mirrors the source subdirectory tree
+    // into args.output_dir. Non-auto mode preserves the historical
+    // "output goes beside each input or into -o/" behaviour verbatim.
+    std::vector<std::string> input_files;
+    std::vector<std::filesystem::path> output_paths;
+
+    if (args.auto_mode) {
+        std::vector<std::pair<std::string, std::string>> collected;
+        if (collect_encrypt_inputs(args.auto_dir, args.max_depth, collected) != 0) {
+            std::cerr << "error: failed to scan --auto dir '" << args.auto_dir
+                      << "'\n";
+            return 1;
+        }
+        if (collected.empty()) {
+            std::cerr << "error: no eligible files found under '"
+                      << args.auto_dir << "'\n";
+            return 1;
+        }
+        input_files.reserve(collected.size());
+        output_paths.reserve(collected.size());
+        for (auto& [in_p, rel] : collected) {
+            std::filesystem::path in_path(in_p);
+            std::filesystem::path out_path;
+            if (rel.empty()) {
+                out_path = std::filesystem::path(args.output_dir) /
+                           in_path.filename();
+            } else {
+                std::filesystem::path mirror =
+                    std::filesystem::path(args.output_dir) / rel;
+                out_path = mirror;
+                std::filesystem::path parent = mirror.parent_path();
+                std::error_code mk_ec;
+                std::filesystem::create_directories(parent, mk_ec);
+                if (mk_ec && !std::filesystem::is_directory(parent, mk_ec)) {
+                    std::cerr << "error: cannot create output directory '"
+                              << parent.string() << "': " << mk_ec.message()
+                              << "\n";
+                    return 1;
+                }
+            }
+            out_path += LOCKED_EXTENSION;
+            input_files.push_back(in_p);
+            output_paths.push_back(std::move(out_path));
+        }
+    } else {
+        input_files = args.files;
+        output_paths.reserve(args.files.size());
+        for (const auto& input : args.files) {
+            std::filesystem::path output_path =
+                args.output_dir.empty()
+                    ? std::filesystem::path(input).concat(LOCKED_EXTENSION)
+                    : std::filesystem::path(args.output_dir) /
+                          (std::filesystem::path(input).filename().string() +
+                           LOCKED_EXTENSION);
+            output_paths.push_back(std::move(output_path));
+        }
+    }
+
     // Refuse to overwrite existing output BEFORE spawning any worker — the
     // existence check must run on the main thread so no race is possible.
-    std::vector<std::filesystem::path> output_paths;
-    output_paths.reserve(args.files.size());
-    for (const auto& input : args.files) {
-        std::filesystem::path output_path =
-            args.output_dir.empty()
-                ? std::filesystem::path(input).concat(LOCKED_EXTENSION)
-                : std::filesystem::path(args.output_dir) /
-                      (std::filesystem::path(input).filename().string() +
-                       LOCKED_EXTENSION);
+    if (!args.auto_mode && !args.output_dir.empty()) {
+        std::error_code mk_ec;
+        std::filesystem::create_directories(args.output_dir, mk_ec);
+        if (mk_ec &&
+            !std::filesystem::is_directory(args.output_dir, mk_ec)) {
+            std::cerr << "error: output directory '" << args.output_dir
+                      << "' cannot be created: " << mk_ec.message() << "\n";
+            return 1;
+        }
+    }
+
+    for (const auto& output_path : output_paths) {
         if (std::error_code ec; std::filesystem::exists(output_path, ec)) {
             std::cerr << "error: '" << output_path.string()
                       << "' already exists. Remove it or choose a different "
                          "output directory.\n";
             return 1;
         }
-        output_paths.push_back(std::move(output_path));
-    }
-
-    if (!args.output_dir.empty()) {
-        if (std::error_code ec; !std::filesystem::is_directory(args.output_dir, ec)) {
-            std::cerr << "error: output directory '" << args.output_dir
-                      << "' does not exist\n";
-            return 1;
-        }
     }
 
     if (!args.quiet) {
-        tracker.start(args.files.size());
+        tracker.start(input_files.size());
     }
 
     // Detect system memory once for the whole invocation — it does not vary
@@ -353,13 +612,13 @@ int run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
     }
 
     std::vector<std::thread> workers;
-    workers.reserve(args.files.size());
+    workers.reserve(input_files.size());
     std::atomic<size_t> files_done{0};
     std::mutex error_mutex;
     std::optional<std::string> first_error;
 
-    for (size_t i = 0; i < args.files.size(); ++i) {
-        const std::string& input    = args.files[i];
+    for (size_t i = 0; i < input_files.size(); ++i) {
+        const std::string& input    = input_files[i];
         const std::filesystem::path& output_path = output_paths[i];
 
         size_t file_size =
@@ -470,6 +729,9 @@ struct DecryptCliArgs {
     bool chunk_size_explicit = false;
     bool verbose          = false;
     bool quiet            = false;
+    bool   auto_mode      = false;
+    std::string auto_dir;
+    int32_t max_depth     = -1;
 };
 
 int run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
@@ -482,15 +744,60 @@ int run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
         std::cerr << "warning: " << pw.warn << "\n";
     }
 
-    if (!args.output_dir.empty()) {
-        if (std::error_code ec; !std::filesystem::is_directory(args.output_dir, ec)) {
-            std::cerr << "error: output directory '" << args.output_dir
-                      << "' does not exist\n";
+    // --auto mode scans args.auto_dir for *.locked files and mirrors their
+    // source subdirectory into args.output_dir. The restored filename is
+    // taken from the header. target_subdir is the mirror sub-path relative
+    // to output_dir ("" for root-level files) in which the output should land.
+    std::vector<std::string> input_files;
+    std::vector<std::string> target_subdirs;
+
+    if (args.auto_mode) {
+        std::vector<std::pair<std::string, std::string>> collected;
+        if (collect_decrypt_inputs(args.auto_dir, args.max_depth, collected) != 0) {
+            std::cerr << "error: failed to scan --auto dir '" << args.auto_dir
+                      << "'\n";
             return 1;
+        }
+        if (collected.empty()) {
+            std::cerr << "error: no eligible files found under '"
+                      << args.auto_dir << "'\n";
+            return 1;
+        }
+        input_files.reserve(collected.size());
+        target_subdirs.reserve(collected.size());
+        constexpr size_t kExtLen = 7;  // length of ".locked"
+        for (auto& [in_p, rel] : collected) {
+            std::string sub = rel;
+            if (sub.size() >= kExtLen &&
+                sub.compare(sub.size() - kExtLen, kExtLen,
+                            LOCKED_EXTENSION) == 0) {
+                sub = sub.substr(0, sub.size() - kExtLen);  // "sub/foo.txt"
+            }
+            std::filesystem::path p(sub);
+            std::string parent = p.parent_path().string();
+            if (parent == "." || parent.empty()) {
+                parent.clear();
+            }
+            input_files.push_back(in_p);
+            target_subdirs.push_back(std::move(parent));
+        }
+    } else {
+        input_files = args.files;
+        target_subdirs.resize(args.files.size());
+        if (!args.output_dir.empty()) {
+            std::error_code mk_ec;
+            std::filesystem::create_directories(args.output_dir, mk_ec);
+            if (mk_ec &&
+                !std::filesystem::is_directory(args.output_dir, mk_ec)) {
+                std::cerr << "error: output directory '" << args.output_dir
+                          << "' cannot be created: " << mk_ec.message()
+                          << "\n";
+                return 1;
+            }
         }
     }
 
-    for (const auto& input : args.files) {
+    for (const auto& input : input_files) {
         if (!HeaderReader::is_locked_file(input)) {
             std::cerr << "error: '" << input
                       << "' is not a .locked file (bad magic)\n";
@@ -499,7 +806,7 @@ int run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
     }
 
     if (!args.quiet) {
-        tracker.start(args.files.size());
+        tracker.start(input_files.size());
     }
 
     // Detect system memory once for the whole invocation. The per-file file
@@ -511,13 +818,13 @@ int run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
     }
 
     std::vector<std::thread> workers;
-    workers.reserve(args.files.size());
+    workers.reserve(input_files.size());
     std::atomic<size_t> files_done{0};
     std::mutex error_mutex;
     std::optional<std::string> first_error;
 
-    for (size_t i = 0; i < args.files.size(); ++i) {
-        const std::string& input = args.files[i];
+    for (size_t i = 0; i < input_files.size(); ++i) {
+        const std::string& input = input_files[i];
 
         size_t file_size =
             static_cast<size_t>(std::filesystem::file_size(input));
@@ -564,10 +871,9 @@ int run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
                                 header.filename_tag.data(), FILENAME_TAG_SIZE));
                     } else {
                         // Fall back: strip ".locked" from the input filename.
-                        // kExtLen is 7 ("strlen of ".locked'").
+                        constexpr size_t kExtLen = 7;
                         std::string fn =
                             std::filesystem::path(input).filename().string();
-                        constexpr size_t kExtLen = 7;
                         if (fn.size() >= kExtLen &&
                             fn.compare(fn.size() - kExtLen, kExtLen,
                                         LOCKED_EXTENSION) == 0) {
@@ -586,11 +892,30 @@ int run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
                         safe_name = "decrypted.dat";
                     }
 
-                    std::filesystem::path output_path =
-                        args.output_dir.empty()
-                            ? std::filesystem::path(input).parent_path() /
-                                  safe_name
-                            : std::filesystem::path(args.output_dir) / safe_name;
+                    std::filesystem::path out_leaf_dir;
+                    if (args.auto_mode) {
+                        const std::string& tsub = target_subdirs[i];
+                        if (tsub.empty()) {
+                            out_leaf_dir = std::filesystem::path(args.output_dir);
+                        } else {
+                            out_leaf_dir =
+                                std::filesystem::path(args.output_dir) / tsub;
+                        }
+                        std::error_code mk_ec;
+                        std::filesystem::create_directories(out_leaf_dir, mk_ec);
+                        if (mk_ec &&
+                            !std::filesystem::is_directory(out_leaf_dir, mk_ec)) {
+                            throw std::runtime_error(
+                                "cannot create output directory '" +
+                                out_leaf_dir.string() + "': " + mk_ec.message());
+                        }
+                    } else if (args.output_dir.empty()) {
+                        out_leaf_dir = std::filesystem::path(input).parent_path();
+                    } else {
+                        out_leaf_dir = std::filesystem::path(args.output_dir);
+                    }
+
+                    std::filesystem::path output_path = out_leaf_dir / safe_name;
 
                     if (std::error_code ec;
                         std::filesystem::exists(output_path, ec)) {
@@ -836,9 +1161,42 @@ int cli_main(int argc, char** argv) {
         std::cerr << "error: " << pa.error << "\n";
         return 1;
     }
-    if (pa.files.empty()) {
-        std::cerr << "error: no input files specified\n";
+
+    // --auto mode is only valid for encrypt/decrypt, not for list.
+    if (pa.auto_mode && cmd == "list") {
+        std::cerr << "error: --auto is not supported by the 'list' command\n";
         return 1;
+    }
+    // --max-depth without --auto is meaningless — reject early so the user
+    // does not get a silent no-op.
+    if (!pa.auto_mode && pa.max_depth != -1) {
+        std::cerr << "error: --max-depth requires --auto\n";
+        return 1;
+    }
+    if (pa.auto_mode) {
+        // --auto is exclusive with positional file arguments — combining
+        // them would be ambiguous (are the positional files inputs to
+        // encrypt, or are they ignored in favour of the dir scan?).
+        if (!pa.files.empty()) {
+            std::cerr << "error: --auto <dir> is exclusive with positional "
+                         "file arguments — choose one\n";
+            return 1;
+        }
+        std::error_code dir_ec;
+        if (!std::filesystem::is_directory(pa.auto_dir, dir_ec)) {
+            std::cerr << "error: --auto dir '" << pa.auto_dir
+                      << "' does not exist or is not a directory\n";
+            return 1;
+        }
+        if (pa.output_dir.empty()) {
+            std::cerr << "error: --auto requires explicit -o/--output-dir\n";
+            return 1;
+        }
+    } else {
+        if (pa.files.empty()) {
+            std::cerr << "error: no input files specified\n";
+            return 1;
+        }
     }
 
     // chunk_size is only meaningful for encrypt — decrypt uses the value
@@ -877,6 +1235,9 @@ int cli_main(int argc, char** argv) {
         eargs.quiet         = pa.quiet;
         eargs.compression       = pa.compression;
         eargs.compression_level = pa.compression_level;
+        eargs.auto_mode     = pa.auto_mode;
+        eargs.auto_dir      = pa.auto_dir;
+        eargs.max_depth     = pa.max_depth;
         return run_encrypt(eargs, tracker);
     }
     if (cmd == "decrypt") {
@@ -893,6 +1254,9 @@ int cli_main(int argc, char** argv) {
         dargs.chunk_size_explicit = pa.chunk_size_explicit;
         dargs.verbose       = pa.verbose;
         dargs.quiet         = pa.quiet;
+        dargs.auto_mode     = pa.auto_mode;
+        dargs.auto_dir      = pa.auto_dir;
+        dargs.max_depth     = pa.max_depth;
         return run_decrypt(dargs, tracker);
     }
     return run_list(pa.files);
