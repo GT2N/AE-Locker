@@ -187,6 +187,15 @@ enum class Str : uint16_t {
     Repl_no_files,            // "  no files specified — aborted"
     Repl_help_hint,           // one-time hint printed at REPL startup: "Enter `help` for command help, `quit` to exit"
 
+    // ---- Completion script generation ----
+    Err_completion_missing,     // "missing shell argument (use: bash|zsh|fish)"
+    Err_completion_unsupported, // "unsupported shell '%s' (choose: bash, zsh, fish)"
+
+    // ---- REPL readline ----
+    // Verbose/status emitted by the readline-backed REPL. Kept in a dedicated
+    // sub-block so concurrent waves do not collide on adjacent Str ids.
+    Repl_readline_missing,      // verbose: emitted once at REPL startup when libreadline was not linked
+
     Str_sentinel              // MUST be last — used to size the string table
 };
 

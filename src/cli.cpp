@@ -3,6 +3,7 @@
 // tracker. main() (in main.cpp) delegates everything to cli_main().
 #include <lock/cli.hpp>
 
+#include <lock/completion.hpp>
 #include <lock/compress.hpp>
 #include <lock/constants.hpp>
 #include <lock/container.hpp>
@@ -1352,6 +1353,49 @@ int cli_main(int argc, char** argv) {
     Lang env_lang = detect_lang_from_env();
     I18n::init(env_lang);
     enable_color_if_tty();
+
+    // `--completion` MUST be detected BEFORE the `--help` / --version /
+    // --cli scan in find_first_special — otherwise those tokens always win
+    // and emit nothing to stdout.  `--lang` / `--no-color` appearing
+    // earlier must still apply so a localized error path is available.
+    // Trailing tokens after the shell argument are ignored (completion
+    // scripts are meant to be sourced, not invoked with additional args).
+    for (size_t k = 0; k < args.size(); ++k) {
+        const std::string& tok = args[k];
+
+        if (tok == "--lang" && k + 1 < args.size()) {
+            const std::string& v = args[k + 1];
+            if (eq_ignore_case(v, "zh"))      I18n::init(Lang::Zh);
+            else if (eq_ignore_case(v, "en")) I18n::init(Lang::En);
+            ++k;
+            continue;
+        }
+        if (tok.rfind("--lang=", 0) == 0) {
+            std::string v = tok.substr(7);
+            if (eq_ignore_case(v, "zh"))      I18n::init(Lang::Zh);
+            else if (eq_ignore_case(v, "en")) I18n::init(Lang::En);
+            continue;
+        }
+
+        std::string shell_value;
+        if (tok == "--completion") {
+            if (k + 1 >= args.size()) {
+                emit_error(tr(Str::Err_completion_missing));
+                return static_cast<int>(ExitCode::Arg);
+            }
+            shell_value = args[k + 1];
+        } else if (tok.rfind("--completion=", 0) == 0) {
+            shell_value = tok.substr(13);
+        } else {
+            continue;
+        }
+
+        if (print_completion_for(shell_value, std::cout)) {
+            return static_cast<int>(ExitCode::Ok);
+        }
+        emit_error(subst(tr(Str::Err_completion_unsupported), shell_value));
+        return static_cast<int>(ExitCode::Arg);
+    }
 
     int special_idx = find_first_special();
     if (special_idx >= 0) {

@@ -174,6 +174,7 @@ message(STATUS "lock: OpenSSL version -- ${OPENSSL_VERSION}")
 set(LOCK_SOURCES
     src/main.cpp
     src/cli.cpp
+    src/completion.cpp
     src/crypto.cpp
     src/compress.cpp
     src/container.cpp
@@ -227,6 +228,43 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
     )
 
     install(TARGETS lock RUNTIME DESTINATION bin)
+
+    # -------------------------------------------------------------------------
+    # Shell tab-completion scripts.  Generated at install time by invoking the
+    # freshly-built `lock` binary (`lock --completion <shell>`) — the source
+    # tree therefore stays free of generated artefacts and the installed
+    # scripts never drift from the binary's actual flag set.  Destinations
+    # follow each shell's vendor convention so a default `DESTDIR`+`make
+    # install` makes completion work with zero extra user setup.
+    # -------------------------------------------------------------------------
+    include(GNUInstallDirs)
+    install(CODE "
+        set(LOCK_BIN \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_BINDIR}/lock\")
+        if(NOT EXISTS \"\${LOCK_BIN}\")
+            message(FATAL_ERROR \"lock binary not found at install time: \${LOCK_BIN}\")
+        endif()
+        file(MAKE_DIRECTORY \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/bash-completion/completions\")
+        file(MAKE_DIRECTORY \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/zsh/site-functions\")
+        file(MAKE_DIRECTORY \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/fish/vendor_completions.d\")
+        execute_process(
+            COMMAND \"\${LOCK_BIN}\" --completion bash
+            OUTPUT_FILE \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/bash-completion/completions/lock\"
+            RESULT_VARIABLE _rc_bash)
+        execute_process(
+            COMMAND \"\${LOCK_BIN}\" --completion zsh
+            OUTPUT_FILE \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/zsh/site-functions/_lock\"
+            RESULT_VARIABLE _rc_zsh)
+        execute_process(
+            COMMAND \"\${LOCK_BIN}\" --completion fish
+            OUTPUT_FILE \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/fish/vendor_completions.d/lock.fish\"
+            RESULT_VARIABLE _rc_fish)
+        foreach(_rc \"_rc_bash\" \"_rc_zsh\" \"_rc_fish\")
+            if(NOT \${_rc} EQUAL 0)
+                message(FATAL_ERROR \"lock --completion install step failed (rc=\${\${_rc}})\")
+            endif()
+        endforeach()
+        message(STATUS \"lock: installed bash/zsh/fish tab-completion scripts under \${CMAKE_INSTALL_DATADIR}\")
+    ")
 else()
     message(STATUS "lock: src/main.cpp not found yet -- skipping target 'lock'. "
                    "Add sources to enable the build target.")

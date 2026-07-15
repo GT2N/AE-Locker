@@ -208,6 +208,13 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "  file path (empty line to finish): ",
     "  no files specified — aborted\n",
     "Enter `help` for command help, `quit` to exit. Inside the REPL you can also type `?` or `h`.\n",
+
+    // ---- Completion script generation ----
+    "missing shell argument (use: bash|zsh|fish)",
+    "unsupported shell '%s' (choose: bash, zsh, fish)",
+
+    // ---- REPL readline ----
+    "[repl] readline not found at build time — using line mode (no history, no Tab completion)\n",
 };
 
 constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_strings = {
@@ -393,6 +400,13 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "  文件路径(空行结束): ",
     "  未指定文件——已中止\n",
     "输入 `help` 查看命令帮助,`quit` 退出。REPL 内也可以输入 `?` 或 `h`。\n",
+
+    // ---- Completion script generation ----
+    "缺少 shell 参数(可选: bash|zsh|fish)",
+    "不支持的 shell '%s'(可选: bash、zsh、fish)",
+
+    // ---- REPL readline ----
+    "[repl] 编译时未发现 readline —— 使用 line 模式(无历史、无 Tab 补全)\n",
 };
 // clang-format on
 
