@@ -255,6 +255,107 @@ rc=2
 
 这样无需 `eval` 也能让对应 shell 自行加载。源码树不保留任何生成产物，安装的脚本永远反映当前 binary 实际识别的 flag 拓扑。
 
+## TUI 交互界面
+
+`lock --tui` 启动基于 ftxui 的全屏终端交互界面，提供菜单式加密/解密操作流程。
+
+```bash
+lock --tui                # 启动 TUI（中文或英文取决于语言探测）
+lock --lang zh --tui      # 强制中文本地化 TUI
+lock --lang en --tui      # 强制英文 TUI
+```
+
+### TUI 守卫条件
+
+TUI 在进入菜单前先做两项检查；任一不通过则退出码 2 并打印错误到 STDERR：
+
+| 条件 | 检查 | 失败信息（中文） |
+|---|---|---|
+| stdin + stderr 必须是 tty | `isatty(STDIN_FILENO) && isatty(STDERR_FILENO)` | `TUI 模式需要交互式终端 (tty)` |
+| 彩色支持必须启用 | `color_enabled()`（即无 `--no-color` / `NO_COLOR` / `CLICOLOR=0`） | `TUI 模式需要彩色支持 (不要使用 --no-color 或 NO_COLOR)` |
+
+非 tty 下运行（管道/重定向/CI）会自动触发第一项拒绝；`--no-color` 无论放在 `--tui` 之前还是之后都会在第二项被拦截。
+
+### 与其它顶层 flag 的互斥
+
+`--tui` 与 `--cli`、`--help`、`--version`、`<子命令>`（`encrypt` / `decrypt` / `list`）是「parallel top-level flags」—— 首个出现在 argv 中的那个胜出，后续的并行 flag 被忽略。`--lang` 可与 `--tui` 共存（影响 TUI 文字语言）。`--completion` 在更早阶段已被处理，不会与 `--tui` 冲突。
+
+### 主菜单 4 项
+
+| 中文 | 英文 | 操作 |
+|---|---|---|
+| 加密 (Encrypt) | Encrypt | ↑/↓ 选中后 Enter 进入加密表单 |
+| 解密 (Decrypt) | Decrypt | ↑/↓ 选中后 Enter 进入解密表单 |
+| 查看 (List) | List | 仅显示占位提示（TUI 模式不可用） |
+| 退出 (Quit) | Quit | 退出 TUI，退出码 0 |
+
+默认高亮在第一项（加密）。List 项是一个占位卡片，提示用户退出 TUI 后用 `lock list <file>` 查看。按 Enter / Esc / `q` 可返回主菜单。
+
+### Wizard 模式
+
+TUI 的设计是一次加密或解密操作的向导（wizard），而不是持续交互的后台面板：
+
+1. 用户在主菜单选择 Encrypt 或 Decrypt。
+2. 进入对应表单，填写字段。
+3. 填写完毕选择 确认，表单验证通过后 TUI 退出 alt-screen，`run_encrypt` / `run_decrypt` 在普通终端中执行（`cout` / `cerr` / 进度条直通用户）。
+4. 执行完毕打印结果行，进程退出。
+5. 用户需要再次 `lock --tui` 进行下一次操作。
+
+Esc 或 Cancel 按钮在表单内取消操作（直接退出 TUI），不回主菜单。Quit 始终以退出码 0 结束。
+
+### Encrypt 表单字段
+
+| 字段 | 占位符 | 说明 |
+|---|---|---|
+| 文件 (Files) | `添加文件 (空行结束添加)` | 输入路径后回车，空行结束添加；可添加多个文件 |
+| 添加文件 button | — | 将当前输入的文件名加入列表 |
+| 压缩算法 (Compression) | — | 三个 Button 模拟 Radiobox：`不压缩` / `lz4 (快)` / `zstd (均衡)`，Tab/Arrow 可穿过 |
+| 压缩级别 (Level) | `3` | zstd 专用，范围 1..22；其它算法忽略此值 |
+| 并发数 (Jobs) | `0` | 每文件 worker 线程数；0 = 自动推荐 |
+| 输出目录 (Output dir) | `输出目录 (空 = 与输入同目录)` | 指定输出位置 |
+| 密码 (Password) | `密码 (输入不可见)` | `password=true`，输入不可见 |
+| 确认密码 (Confirm) | `确认密码 (输入不可见)` | 必须与密码一致 |
+| 确认 (Confirm) button | — | 验证表单；通过后退出 TUI 执行加密 |
+| 取消 (Cancel) button | — | 取消并退出 TUI（同 Esc） |
+
+验证规则：
+- 至少指定一个文件
+- 密码不能为空
+- 密码与确认密码必须一致
+- zstd 时级别必须在 1..22
+
+### Decrypt 表单字段
+
+| 字段 | 占位符 | 说明 |
+|---|---|---|
+| 文件 (Files) | `添加文件 (空行结束添加)` | 输入 `.locked` 文件路径 |
+| 添加文件 button | — | 将当前输入的文件名加入列表 |
+| 并发数 (Jobs) | `0` | 每文件 worker 线程数；0 = 自动推荐 |
+| 输出目录 (Output dir) | `输出目录 (空 = 与输入同目录)` | 指定输出位置 |
+| 密码 (Password) | `密码 (输入不可见)` | `password=true`，输入不可见 |
+| 确认 (Confirm) button | — | 验证表单；通过后退出 TUI 执行解密 |
+| 取消 (Cancel) button | — | 取消并退出 TUI（同 Esc） |
+
+Decrypt 表单无压缩算法/级别/确认密码字段。
+
+### 密码处理
+
+ftxui 的 `Input` 组件在设置 `password=true` 后隐藏字符显示，不回显到终端行。用户填写密码并确认后，`execute_encrypt` / `execute_decrypt` 通过 `mkstemp` 创建临时文件写入明文密码，然后以 `PasswordMode::FromFile` + `--no-safe` 模式调用 `run_encrypt` / `run_decrypt`。加密/解密完成后立即将临时文件填充零字节并 `unlink`，防止磁盘残留。
+
+### 键盘操作
+
+| 按键 | 作用 |
+|---|---|
+| ↑ / ↓ | 主菜单项导航；表单内字段间切换 |
+| Tab | 表单内下一个可聚焦组件 |
+| Enter | 主菜单确认选择；表单内确认输入路径 |
+| Esc | 表单内取消（退出 TUI） |
+| `q` / `Q` | List 占位卡片返回主菜单 |
+
+### 跨平台与依赖
+
+ftxui 通过 CMake FetchContent 自动拉取，与 lz4、zstd、indicators 一致。首次 `cmake --preset default` 会从 GitHub 下载 ftxui 源码并编译为静态库，与 `lock` 静态链接。`lock --tui` 仅在拥有 POSIX termios 的平台上可用（Linux / macOS）。
+
 ## 三种口令来源
 
 | 模式 | 用法 | 安全护栏 |
