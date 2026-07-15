@@ -3,6 +3,7 @@
 // tracker. main() (in main.cpp) delegates everything to cli_main().
 #include <lock/cli.hpp>
 
+#include <lock/cli_dispatch.hpp>
 #include <lock/completion.hpp>
 #include <lock/compress.hpp>
 #include <lock/constants.hpp>
@@ -607,28 +608,13 @@ const char* op_progress_prefix(OpTag op) {
                                   : tr(Str::Progress_file_label_dec);
 }
 
+}  // namespace (anonymous) — encrypt/decrypt/list orchestrators are lifted
+   // into the public `lock` namespace via <lock/cli_dispatch.hpp> so the TUI
+   // can share them; the helpers above stay internal.
+
 // ---------------------------------------------------------------------------
 // Encrypt orchestration.
 // ---------------------------------------------------------------------------
-struct EncryptCliArgs {
-    std::vector<std::string> files;
-    PasswordMode password_mode = PasswordMode::Interactive;
-    std::string password_file;
-    bool no_safe          = false;
-    uint32_t jobs         = 0;
-    bool jobs_explicit    = false;
-    std::string output_dir;
-    uint32_t chunk_size   = (uint32_t)DEFAULT_CHUNK_SIZE;
-    bool chunk_size_explicit = false;
-    CompressionId compression      = CompressionId::NONE;
-    int            compression_level = 3;
-    bool verbose          = false;
-    bool quiet            = false;
-    bool   auto_mode      = false;
-    std::string auto_dir;
-    int32_t max_depth     = -1;
-};
-
 ExitCode run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
     PasswordRequest req;
     req.mode     = args.password_mode;
@@ -857,23 +843,6 @@ ExitCode run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
 // ---------------------------------------------------------------------------
 // Decrypt orchestration.
 // ---------------------------------------------------------------------------
-struct DecryptCliArgs {
-    std::vector<std::string> files;
-    PasswordMode password_mode = PasswordMode::Interactive;
-    std::string password_file;
-    bool no_safe          = false;
-    uint32_t jobs         = 0;
-    bool jobs_explicit    = false;
-    std::string output_dir;
-    uint32_t chunk_size   = (uint32_t)DEFAULT_CHUNK_SIZE;
-    bool chunk_size_explicit = false;
-    bool verbose          = false;
-    bool quiet            = false;
-    bool   auto_mode      = false;
-    std::string auto_dir;
-    int32_t max_depth     = -1;
-};
-
 ExitCode run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
     PasswordRequest req;
     req.mode     = args.password_mode;
@@ -1185,6 +1154,8 @@ ExitCode run_list(const std::vector<std::string>& files) {
     }
     return ExitCode::Ok;
 }
+
+namespace {
 
 // ---------------------------------------------------------------------------
 // Interactive REPL.
