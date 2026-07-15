@@ -73,6 +73,13 @@ enum class Str : uint16_t {
     Help_example_3,
     Help_example_4,
     Help_decrypt_note,          // "decrypt also supports --auto / --max-depth..." note
+    Help_per_subcmd_hint,       // one-liner appended to general help: "Run `lock <cmd> --help` ..."
+    Help_subcmd_encrypt_intro,  // 1-2 line intro for `lock encrypt --help`
+    Help_subcmd_decrypt_intro,  // analog, decrypt
+    Help_subcmd_list_intro,     // analog, list
+    Help_subcmd_encrypt_examples, // examples block tailored for `lock encrypt --help`
+    Help_subcmd_decrypt_examples, // analog, decrypt
+    Help_subcmd_list_examples,    // analog, list
 
     // ---- Common error / status labels --------------------------------------
     Err_label,                  // "error: "
@@ -103,6 +110,7 @@ enum class Str : uint16_t {
     Err_no_eligible_files,      // "no eligible files found under 'X'"
     Err_not_locked,             // "'X' is not a .locked file (bad magic)"
     Err_first_error,            // prefix when re-throwing per-file error from a worker
+    Err_repl_unknown_help_topic, // REPL-only "unknown help topic '%s' (choose: encrypt|decrypt|list)"
 
     // ---- Crypto / IO classification error messages (wrappers) ------------
     // Substrings used to classify untyped std::runtime_error from the lower
@@ -177,6 +185,7 @@ enum class Str : uint16_t {
     Repl_unknown_command_suf_zh, // "'——请使用 'encrypt'、'decrypt'、'list' 或 'quit'\n"
     Repl_file_prompt,          // "  file path (empty line to finish): "
     Repl_no_files,            // "  no files specified — aborted"
+    Repl_help_hint,           // one-time hint printed at REPL startup: "Enter `help` for command help, `quit` to exit"
 
     Str_sentinel              // MUST be last — used to size the string table
 };

@@ -74,6 +74,31 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "# Inspect a .locked container's metadata without decrypting\n"
     "  lock list secret.txt.locked\n",
     "Decrypt also accepts --auto <dir> and --max-depth <N> (see Encrypt-only Options).\n",
+    "Run `lock <cmd> --help` for per-subcommand details.\n",
+    "Encrypt one or more files into tamper-evident .locked containers.\n"
+    "Supports a single file, a list of files, or recursive --auto batch mode.\n",
+    "Decrypt one or more .locked containers, restoring the original file(s).\n"
+    "Supports a single file, a list of files, or recursive --auto batch mode.\n",
+    "Print metadata of one or more .locked containers without decrypting.\n"
+    "Safe to run on any file; non-.locked inputs are reported and skipped.\n",
+    "# Encrypt a single file\n"
+    "  lock encrypt secret.txt\n"
+    "# Compress-then-encrypt with zstd (-z) and a password file\n"
+    "  lock encrypt secret.txt -p pw.txt --no-safe -z -o ./out/\n"
+    "# Recursive batch encrypt mirroring the source tree\n"
+    "  lock encrypt --auto ./secrets --max-depth 3 -o ./encrypted\n",
+    "# Decrypt a single container into ./out/\n"
+    "  lock decrypt secret.txt.locked -o ./out/\n"
+    "# Decrypt with a password file\n"
+    "  lock decrypt secret.txt.locked -p pw.txt --no-safe -o ./out/\n"
+    "# Recursive batch decrypt mirroring the source tree\n"
+    "  lock decrypt --auto ./encrypted -o ./decrypted\n",
+    "# Inspect one or more .locked containers (no password needed)\n"
+    "  lock list secret.txt.locked\n"
+    "# Inspect every .locked file in a directory\n"
+    "  lock list file1.locked file2.locked\n"
+    "# Safe to run on a non-.locked file (reported and skipped)\n"
+    "  lock list plain.txt\n",
 
     // ---- Common error / status labels ------------------------------------
     "error: ",
@@ -104,6 +129,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "no eligible files found under '%s'",
     "'%s' is not a .locked file (bad magic)",
     "error: ",
+    "unknown help topic '%s' (choose: encrypt|decrypt|list)",
 
     // ---- Crypto / IO classification error messages ------------------------
     "HMAC verification failed",
@@ -181,6 +207,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "'——请使用 'encrypt'、'decrypt'、'list' 或 'quit'\n",
     "  file path (empty line to finish): ",
     "  no files specified — aborted\n",
+    "Enter `help` for command help, `quit` to exit. Inside the REPL you can also type `?` or `h`.\n",
 };
 
 constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_strings = {
@@ -232,6 +259,31 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "# 查看一个 .locked 容器的元数据(不解密)\n"
     "  lock list secret.txt.locked\n",
     "decrypt 也支持 --auto <dir> 与 --max-depth <N>(参见\"仅 encrypt 的选项\")。\n",
+    "运行 `lock <子命令> --help` 查看该子命令的详细帮助。\n",
+    "将一个或多个文件加密为带完整性认证的 .locked 容器。\n"
+    "支持单个文件、文件列表,以及递归 --auto 批量模式。\n",
+    "解密一个或多个 .locked 容器,还原原始文件。\n"
+    "支持单个文件、文件列表,以及递归 --auto 批量模式。\n",
+    "打印一个或多个 .locked 容器的元数据(不解密)。\n"
+    "对任何文件都安全运行;非 .locked 文件会被报告并跳过。\n",
+    "# 加密单个文件\n"
+    "  lock encrypt secret.txt\n"
+    "# 用 zstd (-z) 压缩后加密,口令从文件读取\n"
+    "  lock encrypt secret.txt -p pw.txt --no-safe -z -o ./out/\n"
+    "# 递归批量加密(镜像源目录结构)\n"
+    "  lock encrypt --auto ./secrets --max-depth 3 -o ./encrypted\n",
+    "# 解密单个容器到 ./out/\n"
+    "  lock decrypt secret.txt.locked -o ./out/\n"
+    "# 用口令文件解密\n"
+    "  lock decrypt secret.txt.locked -p pw.txt --no-safe -o ./out/\n"
+    "# 递归批量解密(镜像源目录结构)\n"
+    "  lock decrypt --auto ./encrypted -o ./decrypted\n",
+    "# 查看一个或多个 .locked 容器的元数据(无需口令)\n"
+    "  lock list secret.txt.locked\n"
+    "# 查看目录下多个 .locked 文件\n"
+    "  lock list file1.locked file2.locked\n"
+    "# 对非 .locked 文件安全运行(报告并跳过)\n"
+    "  lock list plain.txt\n",
 
     // ---- Common error / status labels ------------------------------------
     "错误: ",
@@ -262,6 +314,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "在 '%s' 下未找到符合条件的文件",
     "'%s' 不是 .locked 文件(magic 不匹配)",
     "错误: ",
+    "未知帮助主题 '%s'(取值: encrypt|decrypt|list)",
 
     // ---- Crypto / IO classification error messages ------------------------
     "HMAC 校验失败",
@@ -339,6 +392,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "'——请使用 'encrypt'、'decrypt'、'list' 或 'quit'\n",
     "  文件路径(空行结束): ",
     "  未指定文件——已中止\n",
+    "输入 `help` 查看命令帮助,`quit` 退出。REPL 内也可以输入 `?` 或 `h`。\n",
 };
 // clang-format on
 

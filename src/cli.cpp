@@ -304,7 +304,19 @@ ParsedArgs parse_args(const std::vector<std::string>& args, size_t offset) {
 // ---------------------------------------------------------------------------
 // Grouped help — emitted in the active UI language.
 // ---------------------------------------------------------------------------
-void print_usage() {
+
+// Per-subcommand tag used by print_subcommand_help and the per-subcommand
+// --help short-circuit scan in cli_main.
+enum class SubCmd { Encrypt, Decrypt, List };
+
+std::optional<SubCmd> parse_subcmd(std::string_view name) {
+    if (name == "encrypt") return SubCmd::Encrypt;
+    if (name == "decrypt") return SubCmd::Decrypt;
+    if (name == "list")    return SubCmd::List;
+    return std::nullopt;
+}
+
+void print_general_help() {
     std::cout << tr(Str::Help_usage_line)
               << "\n"
               << tr(Str::Help_usage_desc)
@@ -344,7 +356,93 @@ void print_usage() {
               << tr(Str::Help_example_1)
               << tr(Str::Help_example_2)
               << tr(Str::Help_example_3)
-              << tr(Str::Help_example_4);
+              << tr(Str::Help_example_4)
+              << tr(Str::Help_per_subcmd_hint);
+}
+
+void print_subcommand_help(SubCmd cmd) {
+    switch (cmd) {
+        case SubCmd::Encrypt:
+            std::cout << tr(Str::Help_usage_line)
+                      << "\n"
+                      << tr(Str::Help_subcmd_encrypt_intro)
+                      << "\n"
+                      << tr(Str::Help_usage_cmd)
+                      << "\n  lock encrypt [options] <file> [<file> ...]\n\n"
+                      << tr(Str::Help_grp_common)
+                      << tr(Str::Help_opt_password_file)
+                      << tr(Str::Help_opt_password_env)
+                      << tr(Str::Help_opt_no_safe)
+                      << tr(Str::Help_opt_jobs)
+                      << tr(Str::Help_opt_output_dir)
+                      << tr(Str::Help_opt_verbose)
+                      << tr(Str::Help_opt_quiet)
+                      << tr(Str::Help_opt_lang)
+                      << tr(Str::Help_opt_no_color)
+                      << tr(Str::Help_opt_help)
+                      << "\n"
+                      << tr(Str::Help_grp_encrypt)
+                      << tr(Str::Help_opt_chunk_size)
+                      << tr(Str::Help_opt_compress)
+                      << tr(Str::Help_opt_compress_z)
+                      << tr(Str::Help_opt_compress_fast)
+                      << tr(Str::Help_opt_level)
+                      << tr(Str::Help_opt_auto)
+                      << tr(Str::Help_opt_max_depth)
+                      << "\n"
+                      << tr(Str::Help_grp_examples)
+                      << tr(Str::Help_subcmd_encrypt_examples);
+            break;
+        case SubCmd::Decrypt:
+            std::cout << tr(Str::Help_usage_line)
+                      << "\n"
+                      << tr(Str::Help_subcmd_decrypt_intro)
+                      << "\n"
+                      << tr(Str::Help_usage_cmd)
+                      << "\n  lock decrypt [options] <file> [<file> ...]\n\n"
+                      << tr(Str::Help_grp_common)
+                      << tr(Str::Help_opt_password_file)
+                      << tr(Str::Help_opt_password_env)
+                      << tr(Str::Help_opt_no_safe)
+                      << tr(Str::Help_opt_jobs)
+                      << tr(Str::Help_opt_output_dir)
+                      << tr(Str::Help_opt_verbose)
+                      << tr(Str::Help_opt_quiet)
+                      << tr(Str::Help_opt_lang)
+                      << tr(Str::Help_opt_no_color)
+                      << tr(Str::Help_opt_help)
+                      << "\n"
+                      << tr(Str::Help_grp_decrypt)
+                      << tr(Str::Help_decrypt_note)
+                      << "\n"
+                      << tr(Str::Help_grp_examples)
+                      << tr(Str::Help_subcmd_decrypt_examples);
+            break;
+        case SubCmd::List:
+            std::cout << tr(Str::Help_usage_line)
+                      << "\n"
+                      << tr(Str::Help_subcmd_list_intro)
+                      << "\n"
+                      << tr(Str::Help_usage_cmd)
+                      << "\n  lock list [options] <file> [<file> ...]\n\n"
+                      << tr(Str::Help_grp_common)
+                      << tr(Str::Help_opt_verbose)
+                      << tr(Str::Help_opt_quiet)
+                      << tr(Str::Help_opt_lang)
+                      << tr(Str::Help_opt_no_color)
+                      << tr(Str::Help_opt_help)
+                      << "\n"
+                      << tr(Str::Help_grp_examples)
+                      << tr(Str::Help_subcmd_list_examples);
+            break;
+    }
+}
+
+// Preserved entry point: callers (cli_main's `--help` global short-circuit and
+// the unknown-command fall-through) keep using print_usage() for the general
+// overview. Delegates to print_general_help().
+void print_usage() {
+    print_general_help();
 }
 
 std::string to_hex(const unsigned char* p, size_t n) {
@@ -1091,6 +1189,7 @@ ExitCode run_list(const std::vector<std::string>& files) {
 ExitCode run_interactive(std::vector<std::string> /*rest*/) {
     std::cerr << tr(Str::Repl_banner);
     std::cerr << tr(Str::Repl_commands_hint);
+    std::cerr << tr(Str::Repl_help_hint);
 
     std::string line;
     while (std::cerr << tr(Str::Repl_prompt) && std::getline(std::cin, line)) {
@@ -1105,6 +1204,24 @@ ExitCode run_interactive(std::vector<std::string> /*rest*/) {
         iss >> cmd;
         if (cmd == "quit" || cmd == "exit" || cmd == "q") {
             return ExitCode::Ok;
+        }
+        // `help`, `?`, `h` (case-sensitive) are REPL-internal help commands.
+        // They never exit the REPL; `help bogus` reports the unknown topic on
+        // STDERR and re-prompts. `quit`/`exit`/`q` as the topic is treated as
+        // "no topic": the user is signalling they want to quit right after
+        // seeing the help, the same pattern as `printf "? quit\n"` in the
+        // help-flow tests.
+        if (cmd == "help" || cmd == "?" || cmd == "h") {
+            std::string topic;
+            iss >> topic;
+            if (topic.empty() || topic == "quit" || topic == "exit" || topic == "q") {
+                print_general_help();
+            } else if (auto sc = parse_subcmd(topic)) {
+                print_subcommand_help(*sc);
+            } else {
+                emit_error(subst(tr(Str::Err_repl_unknown_help_topic), topic));
+            }
+            continue;
         }
         if (cmd != "encrypt" && cmd != "decrypt" && cmd != "list") {
             std::cerr << tr(Str::Repl_unknown_command_pre) << cmd
@@ -1257,7 +1374,29 @@ int cli_main(int argc, char** argv) {
         }
 
         if (special == "-h" || special == "--help") {
-            print_usage();
+            // If a recognized subcommand precedes the --help/-h token,
+            // dispatch to the per-subcommand help block instead of the
+            // general overview (e.g. `lock encrypt --help`,
+            // `lock --lang zh encrypt --help`, `lock encrypt foo.txt --help`).
+            // --lang <X> is consumed as a pair so it never masquerades as
+            // a subcommand here. -c/--command's own subcommand token is
+            // explicitly skipped.
+            std::optional<SubCmd> subcmd;
+            for (size_t k = 0; k < static_cast<size_t>(special_idx); ++k) {
+                const std::string& tok = args[k];
+                if (tok == "--lang" && k + 1 < args.size()) { ++k; continue; }
+                if (tok.rfind("--lang=", 0) == 0)             { continue; }
+                if (tok == "-c" || tok == "--command")       { continue; }
+                if (auto sc = parse_subcmd(tok)) {
+                    subcmd = sc;
+                    break;
+                }
+            }
+            if (subcmd) {
+                print_subcommand_help(*subcmd);
+            } else {
+                print_usage();
+            }
             return static_cast<int>(ExitCode::Ok);
         }
         if (special == "--version") {
