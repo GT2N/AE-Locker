@@ -146,7 +146,34 @@ printf 'pw\npw\n' | ./build/lock encrypt secret.txt
 |---|---|
 | **子命令（默认）** | `lock encrypt <file> [options]` |
 | **flag 形式** | `lock -c encrypt <file> [options]` |
-| **交互式** | `lock --cli`（进入 REPL，支持 `encrypt` / `decrypt` / `list` / `quit`） |
+| **交互式** | `lock --cli`（进入 REPL，支持 `encrypt` / `decrypt` / `list` / `quit`，以及帮助内部命令 `help` / `?` / `h`） |
+
+### 子命令级 `--help` / `-h`
+
+`lock --help` 输出总览；任意子命令后追加 `--help`（或 `-h`）只打印该子命令的简介、相关选项与示例，并立即以退出码 0 返回（不真正执行 encrypt/decrypt/list，即便其它参数已存在）：
+
+```bash
+lock encrypt --help    # encrypt 频专属帮助(EN)
+lock decrypt --help    # decrypt 频专属帮助
+lock list --help       # list 频专属帮助
+lock encrypt -h        # 与 --help 完全一致
+lock --lang zh encrypt --help   # 中文版 encrypt 专属帮助
+lock encrypt foo.txt --help -o out -z   # --help 短路,不加密,退出 0
+```
+
+`lock help encrypt` **不**存在 —— 顶层的 `help` 仍是 unknown command（退出 2），仅在 `--cli` REPL 内部可用。
+
+### `--cli` REPL 内部帮助命令
+
+进入 `lock --cli` 后，REPL 接受额外的帮助命令（仅 REPL 内部，并不暴露为可执行子命令）：
+
+| 命令 | 行为 |
+|---|---|
+| `help` / `?` / `h` | 打印与 `lock --help` 相同的总体帮助到 STDOUT |
+| `help encrypt` / `? encrypt` / `h decrypt` / `? list` 等 | 打印对应子命令的专属帮助到 STDOUT |
+| `help bogus`（或任何非 encrypt/decrypt/list 的主题） | 向 STDERR 输出本地化「未知帮助主题」错误，REPL **不**退出，仍重新提示 |
+
+REPL 启动时会把简短提示打到 STDERR 一次，提示用户可输入 `help` / `?` / `h` 与 `quit`。`quit` / `exit` / `q` 仍以 ExitCode::Ok 结束 REPL。
 
 ## 三种口令来源
 
