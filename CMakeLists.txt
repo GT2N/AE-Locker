@@ -42,6 +42,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # -----------------------------------------------------------------------------
 include(CheckCXXCompilerFlag)
 include(CheckLinkerFlag)
+include(FindPackageHandleStandardArgs)
 
 # NOTE: Ordering is deliberate. All find_package / try-compile checks are done
 # BEFORE we mutate CMAKE_C_FLAGS / CMAKE_CXX_FLAGS / linker flags with the
@@ -58,6 +59,38 @@ find_package(Threads REQUIRED)
 # OpenSSL 3.x.
 # -----------------------------------------------------------------------------
 find_package(OpenSSL REQUIRED)
+
+# -----------------------------------------------------------------------------
+# GNU readline (optional).
+#
+# Probe for libreadline and its dev headers. When both are available we set
+# CACHE var `LOCK_HAVE_READLINE=ON` so downstream `target_compile_definitions`
+# can advertise `LOCK_HAVE_READLINE=1` to translation units; otherwise the
+# cache var stays OFF and cli.cpp falls back to `std::getline` (no history,
+# no Tab completion). The dependency is strictly soft — `cmake --preset
+# default` succeeds either way.
+#
+# We deliberately do NOT use `find_package(readline)` because the standard
+# modules shipped with CMake never include a `FindReadline` module; a manual
+# `find_library` + `find_path` pair is the canonical pattern.
+# -----------------------------------------------------------------------------
+find_library(Readline_LIBRARY NAMES readline)
+find_path(Readline_INCLUDE_DIR NAMES readline/readline.h)
+find_package_handle_standard_args(Readline
+    REQUIRED_VARS Readline_LIBRARY Readline_INCLUDE_DIR)
+# libtinfo (or ncurses on systems without it) is libreadline's only runtime
+# companion; linking against it explicitly keeps -Wl,--as-needed from dropping
+# the transitive dependency under -flto=thin.
+find_library(Readline_TINFO_LIBRARY NAMES tinfo ncurses)
+if(Readline_FOUND)
+    set(LOCK_HAVE_READLINE ON CACHE BOOL "GNU readline available" FORCE)
+else()
+    set(LOCK_HAVE_READLINE OFF CACHE BOOL "GNU readline available" FORCE)
+endif()
+message(STATUS "lock: readline library -- ${Readline_LIBRARY}")
+message(STATUS "lock: readline include -- ${Readline_INCLUDE_DIR}")
+message(STATUS "lock: readline tinfo  -- ${Readline_TINFO_LIBRARY}")
+message(STATUS "lock: GNU readline detected (LOCK_HAVE_READLINE=${LOCK_HAVE_READLINE})")
 
 # -----------------------------------------------------------------------------
 # Force the LLD linker.
@@ -184,6 +217,7 @@ set(LOCK_SOURCES
     src/safe.cpp
     src/term.cpp
     src/i18n.cpp
+    src/repl.cpp
 )
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
@@ -226,6 +260,23 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
         -Wconversion
         -Wshadow
     )
+
+    # -------------------------------------------------------------------------
+    # GNU readline linkage (conditional on LOCK_HAVE_READLINE).
+    #
+    # When readline is present, advertise `LOCK_HAVE_READLINE=1` to every TU so
+    # cli.cpp's `#if LOCK_HAVE_READLINE` branch compiles in the readline-based
+    # REPL; otherwise advertise `=0` and leave cli.cpp with std::getline.
+    # -------------------------------------------------------------------------
+    if(LOCK_HAVE_READLINE)
+        target_compile_definitions(lock PRIVATE LOCK_HAVE_READLINE=1)
+        target_link_libraries(lock PRIVATE ${Readline_LIBRARY})
+        if(Readline_TINFO_LIBRARY)
+            target_link_libraries(lock PRIVATE ${Readline_TINFO_LIBRARY})
+        endif()
+    else()
+        target_compile_definitions(lock PRIVATE LOCK_HAVE_READLINE=0)
+    endif()
 
     install(TARGETS lock RUNTIME DESTINATION bin)
 

@@ -13,6 +13,7 @@
 #include <lock/kdf.hpp>
 #include <lock/memory.hpp>
 #include <lock/progress.hpp>
+#include <lock/repl.hpp>
 #include <lock/safe.hpp>
 
 #include <algorithm>
@@ -1192,8 +1193,20 @@ ExitCode run_interactive(std::vector<std::string> /*rest*/) {
     std::cerr << tr(Str::Repl_commands_hint);
     std::cerr << tr(Str::Repl_help_hint);
 
+#if LOCK_HAVE_READLINE
+    repl_install_completer();
+#else
+    std::cerr << tr(Str::Repl_readline_missing);
+#endif
+
+    const std::string prompt = std::string(tr(Str::Repl_prompt));
+
     std::string line;
-    while (std::cerr << tr(Str::Repl_prompt) && std::getline(std::cin, line)) {
+#if LOCK_HAVE_READLINE
+    while (repl_readline(prompt, line)) {
+#else
+    while (std::cerr << prompt && std::getline(std::cin, line)) {
+#endif
         size_t first_nonspace = line.find_first_not_of(" \t");
         if (first_nonspace == std::string::npos) {
             continue;
