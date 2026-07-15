@@ -240,6 +240,33 @@ enum class Str : uint16_t {
                                    // with the full-screen TUI. Exit the TUI and run
                                    // `lock list <file>` from the shell instead."
 
+    // ---- TUI (wizard) ----
+    // Wave D: multi-step wizard framework + file browser + real List
+    // submenu. Keep the sub-block contiguous so concurrent waves do not
+    // collide on adjacent Str ids. Existing forms-block ids are reused
+    // where the wording is identical (e.g. Tui_password_empty /
+    // Tui_password_mismatch / Tui_no_files_error / Tui_field_* /
+    // Tui_compress_* / Tui_btn_cancel).
+    Tui_wizard_step_prefix,         // "Step " / "步骤 "
+    Tui_wizard_step_of,             // "/" / "/"
+    Tui_step_select_files,          // "Select files" / "选择文件"
+    Tui_step_compress_opts,         // "Compression" / "压缩参数"
+    Tui_step_output_concurrency,   // "Output & concurrency" / "输出与并发"
+    Tui_step_password,              // "Password" / "密码"
+    Tui_step_select_locked,        // "Select .locked file(s)" / "选择 .locked 文件"
+    Tui_btn_back,                  // "← Back" / "← 上一步"
+    Tui_btn_next,                  // "Next →" / "下一步 →"
+    Tui_btn_done,                  // "Finish" / "完成"
+    Tui_err_select_at_least_one_file, // "Please select at least one file" / "请至少选择一个文件"
+    Tui_file_browser_title,        // "File browser — Space to select file, Enter to open directory"
+    Tui_file_browser_current_path, // "Current path" / "当前路径"
+    Tui_file_browser_selected,     // "Selected" / "已选"
+    Tui_file_browser_unreadable,   // "Cannot read this directory" / "无法读取此目录"
+    Tui_list_select_files,         // "Select .locked file(s) to view" / "选择要查看的 .locked 文件"
+    Tui_list_view_btn,             // "View" / "查看"
+    Tui_press_enter_after_op,      // "Operation done. Press Enter to return to main menu"
+                                    //   / "操作完成。按回车返回主菜单"
+
     Str_sentinel              // MUST be last — used to size the string table
 };
 

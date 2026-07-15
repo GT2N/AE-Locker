@@ -254,6 +254,26 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "The `list` subcommand writes to stdout, which conflicts with the\n"
     "full-screen TUI. Exit the TUI and run `lock list <file>` from the\n"
     "shell instead.",
+
+    // ---- TUI (wizard) ----
+    "Step ",
+    "/",
+    "Select files",
+    "Compression",
+    "Output & concurrency",
+    "Password",
+    "Select .locked file(s)",
+    "← Back",
+    "Next →",
+    "Finish",
+    "Please select at least one file",
+    "File browser — Space to select file, Enter to open directory",
+    "Current path",
+    "Selected",
+    "Cannot read this directory",
+    "Select .locked file(s) to view",
+    "View",
+    "Operation done. Press Enter to return to main menu",
 };
 
 constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_strings = {
@@ -484,6 +504,26 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "List —— TUI 模式不可用",
     "`list` 子命令输出到 stdout,与全屏 TUI 冲突。\n"
     "请退出 TUI 后在 shell 中运行 `lock list <file>`。",
+
+    // ---- TUI (wizard) ----
+    "步骤 ",
+    "/",
+    "选择文件",
+    "压缩参数",
+    "输出与并发",
+    "密码",
+    "选择 .locked 文件",
+    "← 上一步",
+    "下一步 →",
+    "完成",
+    "请至少选择一个文件",
+    "文件浏览器 — 空格选择文件, 回车进入目录",
+    "当前路径",
+    "已选",
+    "无法读取此目录",
+    "选择要查看的 .locked 文件",
+    "查看",
+    "操作完成。按回车返回主菜单",
 };
 // clang-format on
 
