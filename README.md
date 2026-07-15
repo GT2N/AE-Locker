@@ -175,6 +175,37 @@ lock encrypt foo.txt --help -o out -z   # --help 短路,不加密,退出 0
 
 REPL 启动时会把简短提示打到 STDERR 一次，提示用户可输入 `help` / `?` / `h` 与 `quit`。`quit` / `exit` / `q` 仍以 ExitCode::Ok 结束 REPL。
 
+### `--cli` REPL readline 支持
+
+`lock --cli` 在编译期探测 GNU readline + libtinfo 作为可选链接依赖；若两者可用，REPL 即由 readline 驱动，提供：
+
+- **行编辑**：←/→/Home/End 词内移动，Ctrl-A / Ctrl-E，Backspace/Delete 编辑光标位置。
+- **历史记录**：↑/↓ 翻阅当前进程内的输入历史（非空行才入历史；空行/纯空白不入历史）。
+- **Tab 补全**：根据光标所在位置感知 CLI 拓扑，补全候选如表所示：
+
+| 输入位置 | 补全内容 |
+|---|---|
+| 行首 / `encrypt` 子命令前 | `encrypt` / `decrypt` / `list` / `help` / `?` / `h` / `quit` / `exit` / `q` |
+| `help` / `?` / `h` 后的位置参数 | `encrypt` / `decrypt` / `list` |
+| 任意子命令后以 `--` 开头的 token | 该子命令可识别的长 flag（例如 `encrypt` 多 `--compress` / `--fast` / `--level` / `--chunk-size` / `--auto` / `--max-depth`；`decrypt` 仅多 `--auto` / `--max-depth`；`list` 仅通用 `--help` / `--lang` / `--no-color` / `--verbose` / `--quiet` / `--no-safe` / `--password-file` / `--password-env-var` / `--jobs` / `--output-dir`） |
+| 任意子命令后单 `-` 开头的 token | 上述长 flag + 通用短 flag（`-p` / `-j` / `-o` / `-h` / `-v` / `-q` / `-z` / `-pev`，只列短 flag）|
+| `--compress ` 之后的 token | `none` / `lz4` / `zstd` |
+| `--lang ` 之后的 token | `en` / `zh` |
+| 其它任何位置 | readline 默认的文件名补全（fallback） |
+
+补全命令以 `--xxx=value` 形式时 strip 到 `--xxx` 再做前缀过滤。唯一匹配时 readline 自动补齐并补一个空格（`rl_completion_append_character = ' '`）；多候选时第一次 `Tab` 响铃提示歧义，第二次 `Tab` 列出全部候选，行为与 bash 一致。`--no-safe` 之类的 flag 不因为补全被改写。
+
+#### 编译期依赖探测
+
+`CMakeLists.txt` 用 `find_library(Readline_LIBRARY NAMES readline)` + `find_path(Readline_INCLUDE_DIR NAMES readline/readline.h)` 探测；二者皆命中即设置 `LOCK_HAVE_READLINE=ON`（cache 变量），并把：
+
+- `-DLOCK_HAVE_READLINE=1` 暴露给所有 lock TU；
+- `${Readline_LIBRARY}`（以及找到时的 `${Readline_TINFO_LIBRARY}`，避免 -Wl,--as-needed 在 ThinLTO 下解掉传递依赖）加入 `target_link_libraries(lock PRIVATE ...)`。
+
+readline 不是 REQUIRED，任何一项缺失都会降级：`LOCK_HAVE_READLINE=OFF`、build 链入 `0`、`cli.cpp` 的 `#if LOCK_HAVE_READLINE` 走 `std::getline` 路径，REPL 启动时向 STDERR 打一行 `[repl] readline not found at build time — using line mode (no history, no Tab completion)`（本地化：中文构建环境显示对应中文）。CREPL 完全无 readline.h 依赖——`include/lock/repl.hpp` 头文件不代理 `readline.h`，仅暴露两个 entry point：`repl_readline(prompt, out)` 与 `repl_install_completer()`；`src/repl.cpp` 在内部 `extern "C" { #include <readline/readline.h> #include <readline/history.h> }`。
+
+构建后 `ldd build/lock | grep readline` 在已探测到 libreadline 的环境下可看到 `libreadline.so.8` 与 `libtinfo.so.6`。
+
 ### Shell tab 自动补全
 
 `lock --completion <shell>` 在运行时按 CLI 已知的 flag 集生成可直接 `eval` / source 的 shell 补全脚本，写入 stdout 并以退出码 0 退出。支持 bash、zsh、fish 三种 shell；脚本是 `lock` 二进制自身在内存中通过纯 C++ 拼装字符串生成的，不调用任何外部子进程、不发起网络请求，也不依赖任何第三方补全库。脚本文本固定为英文（不随 `--lang` 变化），因为脚本是给 shell 解析的，而不是给终端用户逐行阅读的。
