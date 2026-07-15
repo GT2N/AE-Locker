@@ -175,6 +175,55 @@ lock encrypt foo.txt --help -o out -z   # --help 短路,不加密,退出 0
 
 REPL 启动时会把简短提示打到 STDERR 一次，提示用户可输入 `help` / `?` / `h` 与 `quit`。`quit` / `exit` / `q` 仍以 ExitCode::Ok 结束 REPL。
 
+### Shell tab 自动补全
+
+`lock --completion <shell>` 在运行时按 CLI 已知的 flag 集生成可直接 `eval` / source 的 shell 补全脚本，写入 stdout 并以退出码 0 退出。支持 bash、zsh、fish 三种 shell；脚本是 `lock` 二进制自身在内存中通过纯 C++ 拼装字符串生成的，不调用任何外部子进程、不发起网络请求，也不依赖任何第三方补全库。脚本文本固定为英文（不随 `--lang` 变化），因为脚本是给 shell 解析的，而不是给终端用户逐行阅读的。
+
+启用方式：
+
+```bash
+# bash —— 在 ~/.bashrc 里加一句：
+eval "$(lock --completion bash)"
+
+# zsh：先确保已开启补全（一般 .zshrc 里已有 autoload -Uz compinit && compinit）
+eval "$(lock --completion zsh)"
+# 或者把脚本拷到 fpath 任意目录里命名为 _lock（命令名 + 下划线前缀）：
+#   lock --completion zsh > ~/.zsh/_lock
+#   fpath=(~/.zsh $fpath); autoload -Uz compinit && compinit
+
+# fish：可直接 source
+lock --completion fish | source
+```
+
+补全内容覆盖：
+
+- 子命令名 `encrypt` / `decrypt` / `list` 在 `lock ` 后自动补全。
+- 各子命令的短/长 flag（如 `lock encrypt -<TAB>`、`lock decrypt --<TAB>`）。
+- `--compress <TAB>` 补全 `none` / `lz4` / `zstd`；`--lang <TAB>` 补全 `en` / `zh`。
+- `-p` / `--password-file` 补文件；`-o` / `--output-dir` / `--auto` 补目录；位置参数走 shell 默认的文件补全。
+- `list` 子命令后面**不会**补出 `--compress` / `-z` / `--fast` / `--level` / `--auto` / `--max-depth` 这些仅 encrypt 用的 flag。
+
+`--completion` 也可以等号形式给出：`lock --completion=bash` 与空格形式行为完全一致。`--lang` / `--no-color` 若出现在 `--completion` 之前会被识别（错误信息按所选语言本地化），但脚本正文不受影响。未识别的 shell 名会以非零退出码 2 返回并打到 STDERR 一条本地化错误信息，stdout 不会有任何半截脚本流出：
+
+```bash
+$ lock --completion bogus; echo "rc=$?"
+error: unsupported shell 'bogus' (choose: bash, zsh, fish)
+rc=2
+$ lock --completion; echo "rc=$?"
+error: missing shell argument (use: bash|zsh|fish)
+rc=2
+```
+
+如果使用 `make install`（CMake 的 `install` 目标），构建系统会调用刚装好的 `lock` binary 把三种脚本分别生成到 `${CMAKE_INSTALL_DATADIR}` 下的标准 vendor 路径：
+
+| Shell | 安装路径                                                     |
+|---|---|
+| bash  | `${datadir}/bash-completion/completions/lock`               |
+| zsh   | `${datadir}/zsh/site-functions/_lock`                       |
+| fish  | `${datadir}/fish/vendor_completions.d/lock.fish`            |
+
+这样无需 `eval` 也能让对应 shell 自行加载。源码树不保留任何生成产物，安装的脚本永远反映当前 binary 实际识别的 flag 拓扑。
+
 ## 三种口令来源
 
 | 模式 | 用法 | 安全护栏 |
