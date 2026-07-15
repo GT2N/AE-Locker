@@ -186,6 +186,23 @@ FetchContent_MakeAvailable(zstd)
 # NOT define a `zstd::zstd` alias, so we link directly to `libzstd_static`.
 
 # -----------------------------------------------------------------------------
+# ftxui v5.0.0 via FetchContent.
+#
+# C++ TUI library (https://github.com/ArthurSonzogni/FTXUI). The repo owner's
+# handle is `ArthurSonzogni` (with a `g`); the project exposes the canonical
+# CMake targets `ftxui::component`, `ftxui::dom`, `ftxui::screen`, and the
+# umbrella `ftxui::ftxui`. We pin GIT_TAG v5.0.0 (the version documented in
+# the README). GIT_SHALLOW keeps the clone minimal.
+# -----------------------------------------------------------------------------
+FetchContent_Declare(
+    ftxui
+    GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+    GIT_TAG        v5.0.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(ftxui)
+
+# -----------------------------------------------------------------------------
 # Export compile commands for clangd / IDE tooling.
 # -----------------------------------------------------------------------------
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -218,6 +235,7 @@ set(LOCK_SOURCES
     src/term.cpp
     src/i18n.cpp
     src/repl.cpp
+    src/tui.cpp
 )
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
@@ -234,18 +252,25 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
         OpenSSL::SSL
         lz4::lz4
         libzstd_static
+        ftxui::component
     )
 
     target_compile_features(lock PRIVATE cxx_std_20)
 
-    # indicators is a third-party header-only library whose code produces
+    # indicators and ftxui are third-party libraries whose code produces
     # numerous warnings under our strict -Werror -Wconversion -Wsign-conversion
-    # flags.  Mark its include directory SYSTEM (-isystem) so that warnings
-    # emitted from inside indicators headers are suppressed entirely.
+    # flags.  Mark their include directories SYSTEM (-isystem) so warnings
+    # emitted from inside these headers are suppressed entirely.  We do NOT
+    # link `indicators::indicators` for the same reason — its INTERFACE
+    # include directory is non-SYSTEM and would re-enable warnings on
+    # indicators code.  `ftxui::component` is safe to link directly because
+    # its target-level include dir is PRIVATE, but we still mirror the SYSTEM
+    # pattern below to suppress ftxui's own internal header warnings.
     target_include_directories(lock SYSTEM PRIVATE
         ${indicators_SOURCE_DIR}/include
         ${lz4_SOURCE_DIR}/lib             # for lz4.h (lz4 path is ../lib)
         ${zstd_SOURCE_DIR}/lib            # for zstd.h
+        ${ftxui_SOURCE_DIR}/include       # ftxui public headers
     )
 
     target_include_directories(lock PRIVATE

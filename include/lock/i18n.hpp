@@ -196,6 +196,19 @@ enum class Str : uint16_t {
     // sub-block so concurrent waves do not collide on adjacent Str ids.
     Repl_readline_missing,      // verbose: emitted once at REPL startup when libreadline was not linked
 
+    // ---- TUI ----
+    // Strings used by the ftxui-based TUI (src/tui.cpp). Wave A only needs the
+    // main-menu labels + a placeholder for not-yet-implemented submenus.
+    Err_tui_not_a_tty,          // "TUI mode requires an interactive terminal (tty)"
+    Err_tui_no_color,           // "TUI mode requires colour support (don't use --no-color or NO_COLOR)"
+    Tui_menu_title,             // "lock TUI Main Menu"
+    Tui_menu_encrypt,           // "Encrypt"
+    Tui_menu_decrypt,           // "Decrypt"
+    Tui_menu_list,              // "List"
+    Tui_menu_quit,              // "Quit"
+    Tui_not_implemented_yet,    // "(This submenu is not implemented yet)"
+    Tui_press_enter_to_return,  // "Press Enter to return to main menu"
+
     Str_sentinel              // MUST be last — used to size the string table
 };
 

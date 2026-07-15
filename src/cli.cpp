@@ -15,6 +15,7 @@
 #include <lock/progress.hpp>
 #include <lock/repl.hpp>
 #include <lock/safe.hpp>
+#include <lock/tui.hpp>
 
 #include <algorithm>
 #include <array>
@@ -1408,6 +1409,78 @@ int cli_main(int argc, char** argv) {
         }
         emit_error(subst(tr(Str::Err_completion_unsupported), shell_value));
         return static_cast<int>(ExitCode::Arg);
+    }
+
+    // `--tui` MUST be detected BEFORE find_first_special
+    // (--help/--version/--cli) — the user-visible contract is that --tui is
+    // a top-level parallel flag, mutex with --cli/--completion/<subcommand>
+    // /--help/--version, and the FIRST of these encountered in argv wins.
+    // We scan the entire args vector (not just up to --tui) so --no-color /
+    // --lang referenced AFTER --tui still affect the launch refusal paths.
+    // The TUI itself rejects non-tty / --no-color contexts with ExitCode::Arg.
+    {
+        bool tui_seen = false;
+        bool no_color_seen = false;
+
+        // First pass: apply --lang and accumulate --no-color / --tui state
+        // over the full args vector.  We do NOT short-circuit on --tui here so
+        // a trailing --no-color is still honoured.
+        for (size_t k = 0; k < args.size(); ++k) {
+            const std::string& tok = args[k];
+
+            if (tok == "--lang" && k + 1 < args.size()) {
+                const std::string& v = args[k + 1];
+                if (eq_ignore_case(v, "zh"))      I18n::init(Lang::Zh);
+                else if (eq_ignore_case(v, "en")) I18n::init(Lang::En);
+                ++k;
+                continue;
+            }
+            if (tok.rfind("--lang=", 0) == 0) {
+                std::string v = tok.substr(7);
+                if (eq_ignore_case(v, "zh"))      I18n::init(Lang::Zh);
+                else if (eq_ignore_case(v, "en")) I18n::init(Lang::En);
+                continue;
+            }
+            if (tok == "--no-color") {
+                no_color_seen = true;
+                continue;
+            }
+            if (tok == "--tui") {
+                tui_seen = true;
+            }
+        }
+
+        // "First wins" ordering: --tui only wins if it is the FIRST of the
+        // parallel top-level flags {--tui, --cli, --help, --version,
+        // <subcommand>} in argv.  --completion is already handled by the
+        // earlier scan so never reaches here.  Subcommands (encrypt/decrypt
+        // /list) are also parallel top-level dispatch tokens.
+        if (tui_seen) {
+            bool tui_is_first = true;
+            for (const auto& tok : args) {
+                if (tok == "--tui") break;            // tui is first
+                if (tok == "-h" || tok == "--help" ||
+                    tok == "--version" || tok == "--cli" ||
+                    parse_subcmd(tok)) {
+                    tui_is_first = false;             // another parallel flag wins
+                    break;
+                }
+            }
+            if (tui_is_first) {
+                if (no_color_seen) disable_color();
+                ExitCode rc = ExitCode::Internal;
+                try {
+                    rc = tui::run_tui();
+                } catch (const LockError& e) {
+                    emit_error(e.what());
+                    rc = e.code();
+                } catch (const std::exception& e) {
+                    emit_error(e.what());
+                    rc = classify_runtime_error(e.what());
+                }
+                return static_cast<int>(rc);
+            }
+        }
     }
 
     int special_idx = find_first_special();

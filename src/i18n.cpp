@@ -215,6 +215,17 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
 
     // ---- REPL readline ----
     "[repl] readline not found at build time — using line mode (no history, no Tab completion)\n",
+
+    // ---- TUI ----
+    "TUI mode requires an interactive terminal (tty)",
+    "TUI mode requires colour support (don't use --no-color or NO_COLOR)",
+    "lock TUI Main Menu",
+    "Encrypt",
+    "Decrypt",
+    "List",
+    "Quit",
+    "(This submenu is not implemented yet)",
+    "Press Enter to return to main menu",
 };
 
 constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_strings = {
@@ -407,6 +418,17 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
 
     // ---- REPL readline ----
     "[repl] 编译时未发现 readline —— 使用 line 模式(无历史、无 Tab 补全)\n",
+
+    // ---- TUI ----
+    "TUI 模式需要交互式终端 (tty)",
+    "TUI 模式需要彩色支持 (不要使用 --no-color 或 NO_COLOR)",
+    "lock TUI 主菜单",
+    "加密 (Encrypt)",
+    "解密 (Decrypt)",
+    "查看 (List)",
+    "退出 (Quit)",
+    "(本子菜单将在后续版本中实装)",
+    "按回车返回主菜单",
 };
 // clang-format on
 
