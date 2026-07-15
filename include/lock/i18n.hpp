@@ -209,6 +209,37 @@ enum class Str : uint16_t {
     Tui_not_implemented_yet,    // "(This submenu is not implemented yet)"
     Tui_press_enter_to_return,  // "Press Enter to return to main menu"
 
+    // ---- TUI (forms) ----
+    // Wave B: per-subcommand submenus (Encrypt form / Decrypt form /
+    // List not-available).  Keep the sub-block contiguous so concurrent
+    // waves do not collide on adjacent Str ids.
+    Tui_encrypt_form_title,       // "Encrypt — fill in the fields then Confirm"
+    Tui_decrypt_form_title,       // "Decrypt — fill in the fields then Confirm"
+    Tui_field_files,              // "Files (one path per line, empty line to finish)"
+    Tui_field_add_file,           // "Add file (empty to finish adding)"
+    Tui_field_output_dir,         // "Output directory (empty = default)"
+    Tui_field_compression,        // "Compression"
+    Tui_compress_none,            // "none"
+    Tui_compress_lz4,             // "lz4 (fast)"
+    Tui_compress_zstd,            // "zstd (balanced)"
+    Tui_field_level,              // "Compression level (1..22, zstd only; ignored otherwise)"
+    Tui_field_jobs,               // "Jobs (0 = auto-recommend)"
+    Tui_btn_confirm,              // "Confirm"
+    Tui_btn_cancel,               // "Cancel"
+    Tui_password_first,          // "Password (hidden)"
+    Tui_password_second,         // "Confirm password (hidden)"
+    Tui_password_mismatch,       // "Passwords do not match — aborting"
+    Tui_password_empty,           // "Password cannot be empty"
+    Tui_no_files_error,           // "No files specified"
+    Tui_level_range_error,        // "Compression level must be 1..22"
+    Tui_result_ok,                // "Operation finished successfully (rc=0)"
+    Tui_result_err,               // "Operation failed"
+    Tui_press_enter_to_continue, // "Press Enter to continue"
+    Tui_list_not_available_title, // "List — not available in TUI mode"
+    Tui_list_not_available_body,  // "The `list` subcommand writes to stdout, which conflicts
+                                   // with the full-screen TUI. Exit the TUI and run
+                                   // `lock list <file>` from the shell instead."
+
     Str_sentinel              // MUST be last — used to size the string table
 };
 

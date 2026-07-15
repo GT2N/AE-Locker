@@ -226,6 +226,34 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "Quit",
     "(This submenu is not implemented yet)",
     "Press Enter to return to main menu",
+
+    // ---- TUI (forms) ----
+    "Encrypt — fill in the fields then Confirm",
+    "Decrypt — fill in the fields then Confirm",
+    "Files (enter one path then Enter; empty line to finish)",
+    "Add file (empty line to finish adding)",
+    "Output directory (empty = same as input)",
+    "Compression",
+    "none",
+    "lz4 (fast)",
+    "zstd (balanced)",
+    "Compression level (1..22, zstd only; ignored otherwise)",
+    "Jobs (0 = auto-recommend)",
+    "Confirm",
+    "Cancel",
+    "Password (hidden)",
+    "Confirm password (hidden)",
+    "Passwords do not match — aborting",
+    "Password cannot be empty",
+    "No files specified",
+    "Compression level must be in [1, 22]",
+    "Operation finished successfully (rc=0)",
+    "Operation failed",
+    "Press Enter to continue",
+    "List — not available in TUI mode",
+    "The `list` subcommand writes to stdout, which conflicts with the\n"
+    "full-screen TUI. Exit the TUI and run `lock list <file>` from the\n"
+    "shell instead.",
 };
 
 constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_strings = {
@@ -429,6 +457,33 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "退出 (Quit)",
     "(本子菜单将在后续版本中实装)",
     "按回车返回主菜单",
+
+    // ---- TUI (forms) ----
+    "加密 —— 填写字段后选择 确认",
+    "解密 —— 填写字段后选择 确认",
+    "文件 (输入一路径后回车,空行结束)",
+    "添加文件 (空行结束添加)",
+    "输出目录 (空 = 与输入同目录)",
+    "压缩算法",
+    "不压缩",
+    "lz4 (快)",
+    "zstd (均衡)",
+    "压缩级别 (1..22,仅 zstd 生效;其它算法忽略)",
+    "并发数 (0 = 自动推荐)",
+    "确认",
+    "取消",
+    "密码 (输入不可见)",
+    "确认密码 (输入不可见)",
+    "两次输入的密码不一致 —— 已中止",
+    "密码不能为空",
+    "未指定文件",
+    "压缩级别必须在 [1, 22] 范围内",
+    "操作已成功完成 (rc=0)",
+    "操作失败",
+    "按回车继续",
+    "List —— TUI 模式不可用",
+    "`list` 子命令输出到 stdout,与全屏 TUI 冲突。\n"
+    "请退出 TUI 后在 shell 中运行 `lock list <file>`。",
 };
 // clang-format on
 
