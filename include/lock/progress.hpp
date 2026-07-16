@@ -58,7 +58,8 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> pimpl_;
-    void advance_overall();
+    void render_all();
+    void render_all_locked();
 };
 
 }  // namespace lock

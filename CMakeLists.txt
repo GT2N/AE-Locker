@@ -135,16 +135,9 @@ endif()
 # so we intentionally do NOT add `-stdlib=libc++` here.
 
 # -----------------------------------------------------------------------------
-# indicators (header-only) via FetchContent.
+# FetchContent — shared by lz4 / zstd / ftxui below.
 # -----------------------------------------------------------------------------
 include(FetchContent)
-FetchContent_Declare(
-    indicators
-    GIT_REPOSITORY https://github.com/p-ranav/indicators.git
-    GIT_TAG        v2.3
-    GIT_SHALLOW    TRUE
-)
-FetchContent_MakeAvailable(indicators)
 
 # -----------------------------------------------------------------------------
 # lz4 v1.9.4 (static) via FetchContent.
@@ -241,11 +234,6 @@ set(LOCK_SOURCES
 if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
     add_executable(lock ${LOCK_SOURCES})
 
-    # indicators is header-only; we consume it via a SYSTEM include directory
-    # (see target_include_directories below) so that its internal warnings are
-    # suppressed under our strict -Werror/-Wconversion flags.  We do NOT link
-    # the `indicators::indicators` target because its INTERFACE include
-    # directory is non-SYSTEM and would re-enable warnings on indicators code.
     target_link_libraries(lock PRIVATE
         Threads::Threads
         OpenSSL::Crypto
@@ -257,17 +245,14 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
 
     target_compile_features(lock PRIVATE cxx_std_20)
 
-    # indicators and ftxui are third-party libraries whose code produces
-    # numerous warnings under our strict -Werror -Wconversion -Wsign-conversion
-    # flags.  Mark their include directories SYSTEM (-isystem) so warnings
-    # emitted from inside these headers are suppressed entirely.  We do NOT
-    # link `indicators::indicators` for the same reason — its INTERFACE
-    # include directory is non-SYSTEM and would re-enable warnings on
-    # indicators code.  `ftxui::component` is safe to link directly because
-    # its target-level include dir is PRIVATE, but we still mirror the SYSTEM
-    # pattern below to suppress ftxui's own internal header warnings.
+    # ftxui is a third-party library whose code produces numerous warnings under
+    # our strict -Werror -Wconversion -Wsign-conversion flags.  Mark its
+    # include directory SYSTEM (-isystem) so warnings emitted from inside its
+    # headers are suppressed entirely.  lz4 and zstd are pure C libraries, but
+    # their headers still trip -Wconversion when consumed as C++; we treat them
+    # the same way.  We do not link `ftxui::component`'s PUBLIC includes
+    # (the target's include dir is PRIVATE, so we mirror it as SYSTEM here).
     target_include_directories(lock SYSTEM PRIVATE
-        ${indicators_SOURCE_DIR}/include
         ${lz4_SOURCE_DIR}/lib             # for lz4.h (lz4 path is ../lib)
         ${zstd_SOURCE_DIR}/lib            # for zstd.h
         ${ftxui_SOURCE_DIR}/include       # ftxui public headers
