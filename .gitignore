@@ -1,7 +1,11 @@
 # Build artifacts
 /build/
+/build-aarch64/
 /compile_commands.json
 /lock
+
+# Per-arch release artifacts staged under dist/arch/<arch>/lock
+/dist/
 
 # Encrypted test outputs (any local .locked file)
 *.locked
