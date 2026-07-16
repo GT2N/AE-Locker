@@ -41,10 +41,14 @@ set(CMAKE_CXX_COMPILER ${_AARCH64_CLANGXX})
 # 库搜索路径：
 #   - libstdc++.a / libgcc.a 在 /usr/lib/gcc/aarch64-linux-gnu/14/，需要
 #     --gcc-toolchain=/usr 让 clang 把该路径加到 link search path。
+# 静态 PIE：编译期代码位置无关（Position-Independent Executable）。
+# Termux / Android 自 5.0 强制要求 PIE（ET_DYN=3）；glibc-compat 静态 binary 用
+# -static 会生成 ET_EXEC=2，Android linker64 拒绝。改用 -static-pie 同时满足
+# 全静态（无 NEEDED / 无动态依赖）+ PIE（ET_DYN），可在 Android/Termux 上跑。
 set(CMAKE_C_FLAGS_INIT
-    "--target=aarch64-linux-gnu --sysroot=/ --gcc-toolchain=/usr")
+    "--target=aarch64-linux-gnu --sysroot=/ --gcc-toolchain=/usr -fPIE")
 set(CMAKE_CXX_FLAGS_INIT
-    "--target=aarch64-linux-gnu --sysroot=/ --gcc-toolchain=/usr")
+    "--target=aarch64-linux-gnu --sysroot=/ --gcc-toolchain=/usr -fPIE")
 
 # GNU-binutils 的交叉工具：archiver / indexer / 字符串与符号查阅。
 # LLD 本身支持 aarch64，但 ar/ranlib/readelf 仍然按 arch 区分格式。
@@ -74,7 +78,9 @@ set(CMAKE_LIBRARY_ARCHITECTURE aarch64-linux-gnu)
 set(CMAKE_FIND_LIBRARY_SUFFIXES ".a" CACHE STRING "" FORCE)
 
 # 链接器:
-#   -static              让所有运行时库转为 .a，无 NEEDED 项
+#   -static-pie         让所有运行时库转为 .a，无 NEEDED 项；同时生成
+#                       Position-Independent Executable（ET_DYN 类型），
+#                       满足 Termux / Android 5.0+ 强制 PIE 要求。
 #   -fuse-ld=lld         使用 host 的 lld（LLD 自身就是 cross-target linker）
 #   --ld-path=/usr/bin/ld.lld   显式锁定 LLD 路径（与 CMakeLists 的 LLD 检查一致）
 #   -L<link-dirs>        zstd 的 libzstd_static target 暴露 INTERFACE_LINK_LIBRARIES
@@ -86,7 +92,7 @@ set(CMAKE_FIND_LIBRARY_SUFFIXES ".a" CACHE STRING "" FORCE)
 #     报 "unable to find library -lzstd"。default preset 不受影响（没引 toolchain）。
 set(_AARCH64_BUILD_DIR "${CMAKE_SOURCE_DIR}/build-aarch64")
 set(CMAKE_EXE_LINKER_FLAGS_INIT
-    "-static -fuse-ld=lld --ld-path=/usr/bin/ld.lld --gcc-toolchain=/usr --target=aarch64-linux-gnu --sysroot=/ -L${_AARCH64_BUILD_DIR}/_deps/zstd-build/lib -L${_AARCH64_BUILD_DIR}/_deps/lz4-build -L${_AARCH64_BUILD_DIR}/_deps/ftxui-build")
+    "-static-pie -fuse-ld=lld --ld-path=/usr/bin/ld.lld --gcc-toolchain=/usr --target=aarch64-linux-gnu --sysroot=/ -L${_AARCH64_BUILD_DIR}/_deps/zstd-build/lib -L${_AARCH64_BUILD_DIR}/_deps/lz4-build -L${_AARCH64_BUILD_DIR}/_deps/ftxui-build")
 
 # 强制让 find_package(OpenSSL) 直接命中 arm64 静态版。FindOpenSSL 模块在
 # 没有 multiarch hint 时会优先找到 $host_arch/libcrypto.so。我们用
