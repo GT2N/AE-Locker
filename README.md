@@ -21,24 +21,158 @@
 
 ## 构建
 
-依赖：
-- **Clang 16+**（C++20.coroutine/`std::span`）
+### 通用依赖
+
+- **Clang 15+**（C++20.coroutine / `std::span`）
 - **LLD**（链接器，ThinLTO 后端）
 - **Ninja**
-- **CMake 3.16+**
+- **CMake 3.25+**（preset 用 `CMAKE_CXX_COMPILER_TARGET` 等 3.25+ 才稳的工具链功能）
 - **OpenSSL 3.x**（提供 `EVP_KDF_scrypt`、`EVP_MAC`）
-- **LZ4 v1.9.4** 和 **zstd v1.5.7** 通过 CMake FetchContent 自动下载构建(无需系统预装);首次 `cmake --preset default` 会从 GitHub 拉取
+- **（可选）GNU readline + libtinfo** — 提供 `--cli` REPL 的历史与 Tab 补全；探测不到时 CMake 自动降级为 `std::getline` 模式（无历史、无补全），其它功能不受影响
+- **LZ4 v1.9.4 / zstd v1.5.7 / indicators v2.3 / ftxui v5.0.0** 均由 CMake
+  `FetchContent` 自动拉取并静态构建，无需系统预装；首次 `cmake` 配置会从
+  GitHub clone，之后增量复用 `build/_deps/`
+
+`CMakePresets.json` 自带三个 preset：
+
+| preset | 目标架构 | 链接方式 | 用途 |
+|---|---|---|---|
+| `default`         | host (x86_64 / aarch64) | 动态           | 主开发路径，产物在 `build/lock` |
+| `debug`           | host                    | 动态，无 ThinLTO | 调试 |
+| `aarch64-static`  | aarch64 Linux           | **全静态** (`-static-pie`，无 `NEEDED`) | x86_64 主机交叉编译，产物在 `build-aarch64/lock` |
+
+所有 preset 共享：
+
+- `-flto=thin` + `-Wl,--thinlto-cache-dir=<build>/.lto-cache`（`debug` 关）
+- `-fuse-ld=lld` + `--ld-path=$(which ld.lld)`
+- `-Wall -Wextra -Wpedantic -Werror -Wconversion -Wimplicit-int-conversion -Wshadow`
+
+> 三个 preset **互不冲突**：`default` / `debug` 产出在 `build/`，`aarch64-static`
+> 产出在 `build-aarch64/`，cache 完全隔离，可以在同一棵源码树里来回切。
+
+### Debian / Ubuntu — x86_64 主机（最常见）
 
 ```bash
-cmake --preset default       # 一次性配置（首跑会 FetchContent 拉取 indicators）
+sudo apt-get install -y clang lld ninja-build cmake libssl-dev libreadline-dev
+git clone <repo-url> && cd lock
+cmake --preset default       # 一次性配置（首跑会 FetchContent 拉取 indicators/lz4/zstd/ftxui）
 cmake --build build          # 增量编译
 ./build/lock --version
 ```
 
-`CMakePresets.json` 默认使用 `clang++` + Ninja 生成器，并启用：
-- `-flto=thin` + `-Wl,--thinlto-cache-dir=build/.lto-cache`
-- `-fuse-ld=lld`
-- `-Wall -Wextra -Wpedantic -Werror -Wconversion -Wimplicit-int-conversion`
+`libreadline-dev` 可省略 — CMake 探测不到 readline 会自动降级到 `std::getline`
+的 REPL 模式（无历史、无 Tab 补全），其它功能不受影响。
+
+### Debian / Ubuntu — aarch64 native 主机（Raspberry Pi OS 64-bit 等）
+
+在 aarch64 主机上 `cmake --preset default` 直接可用 —— clang 在 aarch64 host
+上的默认 target 就是 `aarch64-linux-gnu`，preset 完全兼容。安装、编译命令与
+x86_64 主机路径完全相同：
+
+```bash
+sudo apt-get install -y clang lld ninja-build cmake libssl-dev libreadline-dev
+cmake --preset default
+cmake --build build
+./build/lock --version
+```
+
+产物为动态链接 binary，依赖同机 `libssl.so.3` / `libstdc++.so.6` / `libreadline.so.8`
+等；把 `lock` 拷到同发行版同代 glibc 的 aarch64 机器上跑需要先 `apt install`
+对应运行时库（或者改用下述交叉编译的静态产物）。
+
+### Debian / Ubuntu — 在 x86_64 主机交叉编译 aarch64 **静态** binary
+
+需启用 Debian multiarch arm64 并预装交叉工具链与 arm64 静态库。一次性 setup：
+
+```bash
+# 1) 启用 arm64 multiarch
+sudo dpkg --add-architecture arm64
+sudo apt-get update
+
+# 2) host 工具：clang / lld / ninja / cmake
+sudo apt-get install -y clang lld ninja-build cmake
+
+# 3) arm64 binutils（ar/ranlib/strip 必须按 arch 区分格式;LLD 虽能 link arm64,但归档仍用 arch-specific ar）
+sudo apt-get install -y binutils-aarch64-linux-gnu
+
+# 4) 交叉 glibc + libgcc/libstdc++ 静态库
+sudo apt-get install -y libc6-dev-arm64-cross g++-aarch64-linux-gnu
+
+# 5) arm64 静态 OpenSSL + readline + tinfo（multiarch 包，:arm64 后缀）
+sudo apt-get install -y libssl-dev:arm64 libreadline-dev:arm64 libtinfo-dev:arm64
+```
+
+之后在 `lock/` 源码树里：
+
+```bash
+cmake --preset aarch64-static          # 一次性配置
+cmake --build --preset aarch64-static  # 增量编译
+# 产物在 build-aarch64/lock，无任何 NEEDED 项，可 scp 到任意标准 aarch64
+# Linux（glibc 2.31+）直接跑，无需目标机安装任何 runtime lib
+```
+
+`cmake/aarch64-linux-gnu.cmake` toolchain file 已强制把 OpenSSL / readline /
+tinfo / libstdc++ / libgcc / glibc 全部 link 成 `.a`，并用 `-static-pie`
+产生一个无 `NEEDED` 的 ET_DYN binary。产物支持范围详见下文「跨架构产物」。
+
+### macOS
+
+macOS 默认使用 Apple `ld64`，不是 LLD；OpenSSL / readline 走 Homebrew。把
+Homebrew 的 llvm（带 lld）与 openssl/readline 路径显式暴露给 CMake：
+
+```bash
+brew install cmake ninja llvm@18 openssl@3 readline
+
+# Intel mac 把 /opt/homebrew 换成 /usr/local
+export PATH=/opt/homebrew/opt/llvm/bin:$PATH
+export OPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
+export Readline_ROOT=/opt/homebrew/opt/readline
+
+cmake --preset default
+cmake --build build
+./build/lock --version
+```
+
+> macOS 路径**尚未实测**。 ThinLTO + LLD 与 macOS 的 code signing / notarization
+> 偶有冲突。若遇 LLD 链接问题，可 `-DENABLE_THINLTO=OFF` 关 ThinLTO，并把
+> `CMAKE_LINKER_TYPE` 设为 `ld64`（或让 CMake 自动 fallback 到 Apple linker）。
+
+### Termux on Android — on-device 编译
+
+Termux 是 lock 在 Android 上跑的**唯一可行路径**：直接在 Termux 里用 Termux 自带的
+clang 编译。Termux clang 的默认 target 是 `aarch64-linux-android`（Bionic libc），
+产物本身就是 Bionic-native，可在 Termux 直接跑。`dist/arch/aarch64/lock` 静态
+产物（glibc）**不可**用于 Termux，详见下文「不支持的平台 — Termux / Android」。
+
+```bash
+# 在 Termux (任意 64-bit Android 设备) 内：
+pkg install clang lld ninja cmake openssl readline
+
+# CMakePresets.json 的 preset 假定 Debian multiarch layout，
+# Termux 的 prefix 在 $PREFIX (默认 /data/data/com.termux/files/usr)，
+# 与 preset 假定不同 —— 因此 preset 不能直接用，需手动传 cache var:
+cmake -B build -G Ninja \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DENABLE_THINLTO=ON \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+cmake --build build
+./build/lock --version
+```
+
+> Termux on-device 编译路径**尚未实测**。已知风险点：
+> 1. FetchContent 第一次会从 GitHub `git clone` lz4 / zstd / ftxui，受
+>    Termux 网络代理或磁盘权限限制时，可能需要改用 `URL` 源或预先 vendor 源码
+> 2. Termux 的 libtinfo 不一定独立存在（readline 与 ncurses 在 Termux 上常被合并），
+>    若 `find_library(Readline_TINFO_LIBRARY NAMES tinfo ncurses)` 找不到
+>    `libtinfo`，CMake 仍会链 readline 但 REPL 在某些终端下亮色/光标控制会异常
+> 3. Termux 的 `mmap` / `getrandom` 行为与 Linux glibc 不完全一致 ——
+>    `RAND_bytes` 与流式 I/O 在 Android 6.0+ 应正常，但低版本 Android
+>    可能 `/dev/urandom` 不可用
+>
+> 实测通过后欢迎反馈，会更新本节。
 
 ## 快速开始
 
@@ -615,33 +749,50 @@ peak_memory = O((N + 1) × chunk_size)
 
 ```
 .
-├── CMakeLists.txt        # 构建配置（FetchContent indicators、ThinLTO、LLD）
-├── CMakePresets.json     # default preset
+├── CMakeLists.txt           # 构建配置（FetchContent indicators/lz4/zstd/ftxui、ThinLTO、LLD）
+├── CMakePresets.json        # presets: default / debug / aarch64-static
+├── cmake/
+│   └── aarch64-linux-gnu.cmake  # aarch64 cross toolchain (-static-pie, multiarch .a)
 ├── .clang-format
 ├── include/lock/
-│   ├── constants.hpp     # 文件格式常量、scrypt 默认参数
-│   ├── endian.hpp        # big-endian load/store 辅助
-│   ├── kdf.hpp           # scrypt KDF 接口
-│   ├── crypto.hpp        # 加密/解密接口
-│   ├── safe.hpp          # 三种口令来源模式
-│   ├── term.hpp          # termios ECHO 切换
-│   ├── progress.hpp      # 进度条封装
-│   ├── cli.hpp           # cli_main() 入口
-│   ├── compress.hpp      # 压缩接口(LZ4/zstd)
-│   ├── container.hpp     # FileHeader 结构 + HeaderWriter/Reader
-│   ├── memory.hpp        # 内存检测 + 流式参数推荐
+│   ├── constants.hpp        # 文件格式常量、scrypt 默认参数
+│   ├── endian.hpp           # big-endian load/store 辅助
+│   ├── errors.hpp           # ExitCode 枚举 + 自定义 exception 类
+│   ├── kdf.hpp              # scrypt KDF 接口
+│   ├── crypto.hpp           # 加密/解密接口（AES-256-CTR / GCM、IV 派生）
+│   ├── compress.hpp         # 压缩接口（LZ4 / zstd）
+│   ├── container.hpp        # FileHeader 结构 + HeaderWriter/Reader
+│   ├── memory.hpp           # 可用内存检测 + chunk_size/jobs 自动推荐
+│   ├── progress.hpp         # 进度条封装（indicators 库）
+│   ├── safe.hpp             # 三种口令来源模式（交互 / 文件 / env）
+│   ├── term.hpp             # termios ECHO 切换
+│   ├── i18n.hpp             # Lang/Str 枚举 + tr() 表驱动本地化
+│   ├── cli.hpp              # cli_main() 入口
+│   ├── cli_dispatch.hpp     # 子命令 dispatch（encrypt/decrypt/list）+ 提示文案
+│   ├── completion.hpp       # `--completion <shell>` 输出 bash/zsh/fish 脚本
+│   ├── repl.hpp            # `--cli` REPL 入口（readline / getline fallback）
+│   └── tui.hpp             # `--tui` 入口（ftxui wizard / file browser）
 ├── src/
-│   ├── kdf.cpp           # scrypt via EVP_KDF (OpenSSL 3.x)
-│   ├── container.cpp     # header 序列化/反序列化
-│   ├── crypto.cpp        # AES-256-CTR 并行 + AES-256-GCM 文件名
-│   ├── safe.cpp          # 口令输入处理
-│   ├── term.cpp          # termios 封装
-│   ├── progress.cpp      # indicators 进度条
-│   ├── cli.cpp           # CLI dispatcher + REPL
-│   ├── compress.cpp      # LZ4/zstd block-API 压缩封装
-│   ├── memory.cpp        # 可用内存检测 + chunk_size/jobs 自动推荐
-│   └── main.cpp          # 1 行委派
-└── build/                # 生成产物（gitignore）
+│   ├── main.cpp             # 1 行委派：`return lock::cli_main(argc, argv);`
+│   ├── kdf.cpp              # scrypt via EVP_KDF (OpenSSL 3.x)
+│   ├── crypto.cpp           # AES-256-CTR 并行 + AES-256-GCM 文件名
+│   ├── compress.cpp         # LZ4/zstd block-API 压缩封装
+│   ├── container.cpp        # header 序列化/反序列化 + v1/v2 兼容
+│   ├── memory.cpp           # sysconf/sysctl 可用内存检测 + 调参
+│   ├── progress.cpp         # indicators 进度条（per-file + overall）
+│   ├── safe.cpp             # 口令输入处理（getpass / 文件 / env）
+│   ├── term.cpp             # termios 封装
+│   ├── i18n.cpp             # Lang/Str 表 + `tr()` 实现 + 探测逻辑
+│   ├── cli.cpp              # 位置参数解析 + 顶层 dispatch
+│   ├── cli_dispatch.cpp     # 子命令实现（encrypt/decrypt/list/auto 批量）
+│   ├── completion.cpp       # bash/zsh/fish 补全脚本拼装
+│   ├── repl.cpp             # readline 集成 + Tab completer
+│   └── tui.cpp              # ftxui 主菜单 + 多步 wizard + 文件浏览器
+├── scripts/
+│   └── smoke-tui.sh         # TUI 冒烟测试（8 步）
+├── dist/arch/{x86_64,aarch64}/lock  # 产物副本（gitignore 实物 binary；只保留目录占位）
+├── build/                   # default preset 产物（gitignore）
+└── build-aarch64/           # aarch64-static preset 产物（gitignore）
 ```
 
 ## 安全说明
@@ -652,6 +803,57 @@ peak_memory = O((N + 1) × chunk_size)
 - `RAND_bytes` 来自 OpenSSL 默认随机源（getrandom/CSPRNG）
 - 未提供密钥轮换/多 recipient/密钥托管；适合个人文件加密场景
 
+## 跨架构产物 (`dist/arch/`)
+
+通过 `cmake --preset aarch64-static` 可在 x86_64 主机为 aarch64 Linux 交叉编译一
+个 **single static-pie binary**。两个架构的产物可以并存在 `dist/arch/<arch>/lock`:
+
+```
+dist/
+└── arch/
+    ├── x86_64/lock        ← cmake --preset default 的产出（动态链接）
+    └── aarch64/lock       ← cmake --preset aarch64-static 的产出（全静态）
+```
+
+| 架构 | preset | 链接方式 | 体积 | 大小依赖 |
+|---|---|---|---|---|
+| x86_64  | `default`        | 动态 (OpenSSL / readline / glibc / libstdc++) | ~1.7 MB | 目标机需装同版本 OpenSSL 3.x / readline |
+| aarch64 | `aarch64-static` | 全静态 (`-static-pie`)，无任何 `NEEDED` 项 | ~11 MB | 无依赖，拷过去就跑 |
+
+### 支持范围
+
+- **x86_64 产物**：标准 x86_64 Linux（glibc 2.31+，OpenSSL 3.x）。在 Debian/Ubuntu/RHEL/Fedora 等标准发行版上测试通过。
+- **aarch64 产物**：标准 aarch64 Linux（glibc 2.31+），**包括但不限于**：
+
+  - Debian/Ubuntu/Raspberry Pi OS 64-bit / Alpine aarch64 glibc 版本 / 任何 aarch64 Linux 发行版
+  - 树莓派 4/5 (aarch64 Raspberry Pi OS)
+  - aarch64 服务器 / 云实例 / 嵌入式 Linux 主板（需 glibc 2.31+）
+
+### 不支持的平台 — Termux / Android
+
+`dist/arch/aarch64/lock` **不能在 Termux / Android 上运行**。这不是构建参数可调
+的 toolchain 限制，而是 glibc 与 Bionic 的根本架构错配：
+
+1. 我们的 arm64 binary 静态链接 **glibc**，其 `_start` 会调用 glibc 的
+   `__libc_start_main` 自举逻辑（应用 RELA 重定位、初始化 TLS、跑 preinit
+   arrays 等）。
+2. Android 自 5.0 起把 `e_type=DYN`（PIE）binary 强制路由给 Bionic 的
+   `linker64` 处理。`linker64` 在跳 `_start` 之前已经做了一遍相同的执行环境
+   初始化（自己应用 RELA 重定位、初始化 Bionic TLS、跑 `DT_INIT_ARRAY`
+   构造函数）。
+3. 然后 `linker64` 跳 binary 的 `_start`，glibc 自举逻辑再做第二次重定位
+   / 第二次 TLS 初始化，与 Bionic 已经做好的状态冲突 → 进程立刻 segfault
+   （用户场景下表现为 `lock --help` 直接段错误，无 error message）。
+
+前面为了让 binary 通过 Bionic 的两个硬性边界检查所做的工作（提交
+`9cd5813` 的 `-static-pie` 改 e_type=DYN；提交 `3bbf66e` 的 alignas(64)
+thread_local 哑变量抬 PT_TLS p_align 到 64）解决了 Bionic 的「PIE-only」与
+「TLS 对齐 64」拒绝，但解决不掉后面的 glibc/Bionic 双 libc 互斥。
+
+要在 Termux/Android 上跑 `lock`，需要用 Android NDK（Bionic libc）重新交叉
+构建一个 native Bionic binary，或在 Termux 内部直接 `clang++` 编译——两条都
+是另一条独立 build path，未包含在当前 preset 中。
+
 ## 限制
 
 - 经 v2 流式重写，内存峰值与文件大小无关，固定为 `O((N+1) × chunk_size)`；不存在 64 GiB 硬上限（也不再设 MAX_PLAINTEXT_BYTES 限制）
@@ -659,3 +861,6 @@ peak_memory = O((N + 1) × chunk_size)
 - v2 格式已实装;v1 文件只读兼容(由 HeaderReader 自动归一化),写路径永远输出 v2
 - 压缩比会泄露部分文件信息(类型/熵),对极敏感场景可保留 `--compress none`
 - 仅 Linux/macOS 测试通过（依赖 POSIX termios）
+- aarch64 交叉构建产物 (`dist/arch/aarch64/lock`) 支持标准 glibc aarch64
+  Linux；不支持 Termux / Android（glibc 与 Bionic 双 libc 不可共存，详见
+  上文「不支持的平台」）
