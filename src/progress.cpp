@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -27,8 +28,9 @@ std::string truncate_filename(std::string_view name) {
     return s;
 }
 
-constexpr size_t kOverallBarWidth = 60;
-constexpr size_t kFileBarWidth = 50;
+constexpr size_t kOverallBarWidth = 40;
+constexpr size_t kFileBarWidth    = 30;
+constexpr auto kRenderInterval = std::chrono::milliseconds(33);
 
 indicators::Color overall_color() {
     return color_enabled() ? indicators::Color::green
@@ -55,8 +57,15 @@ struct ProgressTracker::Impl {
 
     size_t total_files = 0;
     std::atomic<size_t> files_done{0};
+
+    std::atomic<size_t> total_chunks_done{0};
+    std::atomic<size_t> total_chunks_all{0};
+
+    std::unique_ptr<std::atomic<size_t>[]> chunks_done_per_file;
     std::vector<size_t> total_chunks_per_file;
     std::vector<std::string> file_names;
+    std::vector<std::chrono::steady_clock::time_point> last_render;
+
     bool started = false;
     bool finished = false;
     bool plain = false;
@@ -68,11 +77,9 @@ ProgressTracker::ProgressTracker() : pimpl_(std::make_unique<Impl>()) {}
 
 ProgressTracker::~ProgressTracker() {
     if (pimpl_ && pimpl_->started && !pimpl_->finished) {
-        // Best-effort terminal cleanup on early-exit paths (exceptions, etc.).
         try {
             finish();
         } catch (...) {
-            // Intentionally swallowed: destructors must not throw.
         }
     }
 }
@@ -84,8 +91,17 @@ void ProgressTracker::start(size_t total_files) {
     std::lock_guard<std::mutex> lock(pimpl_->start_mutex);
     pimpl_->total_files = total_files;
     pimpl_->files_done.store(0, std::memory_order_relaxed);
+    pimpl_->total_chunks_done.store(0, std::memory_order_relaxed);
+    pimpl_->total_chunks_all.store(0, std::memory_order_relaxed);
+    pimpl_->chunks_done_per_file =
+        std::make_unique<std::atomic<size_t>[]>(total_files + 1);
+    for (size_t i = 0; i <= total_files; ++i) {
+        pimpl_->chunks_done_per_file[i].store(0, std::memory_order_relaxed);
+    }
     pimpl_->total_chunks_per_file.assign(total_files + 1, 0);
     pimpl_->file_names.assign(total_files, {});
+    pimpl_->last_render.assign(total_files + 1,
+                               std::chrono::steady_clock::time_point{});
     pimpl_->plain = !color_enabled();
 
     if (pimpl_->plain) {
@@ -97,27 +113,20 @@ void ProgressTracker::start(size_t total_files) {
 
     indicators::show_console_cursor(false);
 
-    // Slot 0: overall bar — must be pushed FIRST so it renders at the top.
     pimpl_->bar_storage.emplace_back(
         indicators::option::BarWidth{kOverallBarWidth},
         indicators::option::Start{"Progress "},
         indicators::option::End{""},
         indicators::option::PrefixText{tr(Str::Progress_overall_prefix)},
-        indicators::option::PostfixText{"0/" + std::to_string(total_files)},
+        indicators::option::PostfixText{"0/0"},
         indicators::option::ForegroundColor{overall_color()},
         indicators::option::FontStyles{bold_style()},
         indicators::option::ShowPercentage{true},
-        indicators::option::ShowElapsedTime{true},
-        indicators::option::ShowRemainingTime{true},
-        indicators::option::MaxPostfixTextLen{24}
+        indicators::option::MaxPostfixTextLen{16}
     );
     pimpl_->bars.push_back(pimpl_->bar_storage.back());
     pimpl_->bar_storage.back().set_progress(0);
 
-    // Slots 1..N: per-file placeholder bars. Their prefix/postfix get filled in
-    // by start_file(); we still create real bars now so that DynamicProgress has
-    // a stable index space established entirely on the main thread before any
-    // worker starts.
     for (size_t i = 0; i < total_files; ++i) {
         pimpl_->bar_storage.emplace_back(
             indicators::option::BarWidth{kFileBarWidth},
@@ -127,8 +136,7 @@ void ProgressTracker::start(size_t total_files) {
             indicators::option::PostfixText{""},
             indicators::option::ForegroundColor{file_color()},
             indicators::option::ShowPercentage{true},
-            indicators::option::ShowElapsedTime{true},
-            indicators::option::MaxPostfixTextLen{24}
+            indicators::option::MaxPostfixTextLen{16}
         );
         pimpl_->bars.push_back(pimpl_->bar_storage.back());
         pimpl_->bar_storage.back().set_progress(0);
@@ -146,6 +154,10 @@ void ProgressTracker::start_file(size_t file_idx,
     if (file_idx < pimpl_->file_names.size()) {
         pimpl_->file_names[file_idx] = std::string(filename);
     }
+    pimpl_->total_chunks_all.fetch_add(total_chunks,
+                                       std::memory_order_relaxed);
+    pimpl_->chunks_done_per_file[slot].store(0,
+                                             std::memory_order_relaxed);
 
     if (pimpl_->plain) {
         std::lock_guard<std::mutex> pl(pimpl_->plain_mutex);
@@ -159,6 +171,7 @@ void ProgressTracker::start_file(size_t file_idx,
     bar.set_option(indicators::option::PostfixText{
         "0/" + std::to_string(total_chunks)});
     bar.set_progress(0);
+    pimpl_->last_render[slot] = std::chrono::steady_clock::now();
 }
 
 void ProgressTracker::update_file(size_t file_idx, size_t chunk_done) {
@@ -169,11 +182,30 @@ void ProgressTracker::update_file(size_t file_idx, size_t chunk_done) {
         return;
     }
     size_t clamped = std::min(chunk_done, total);
+
+    size_t old = pimpl_->chunks_done_per_file[slot].exchange(
+        clamped, std::memory_order_relaxed);
+    if (clamped == old) {
+        return;
+    }
+    if (clamped > old) {
+        pimpl_->total_chunks_done.fetch_add(clamped - old,
+                                           std::memory_order_relaxed);
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - pimpl_->last_render[slot] < kRenderInterval) {
+        return;
+    }
+    pimpl_->last_render[slot] = now;
+
     size_t pct = (clamped * 100) / total;
     auto& bar = pimpl_->bars[slot];
     bar.set_option(indicators::option::PostfixText{
         std::to_string(clamped) + "/" + std::to_string(total)});
     bar.set_progress(std::min<size_t>(pct, 100));
+
+    advance_overall();
 }
 
 void ProgressTracker::finish_file(size_t file_idx) {
@@ -191,20 +223,35 @@ void ProgressTracker::finish_file(size_t file_idx) {
         return;
     }
     const size_t slot = file_idx + 1;
+    const size_t total = pimpl_->total_chunks_per_file[slot];
+
+    size_t old = pimpl_->chunks_done_per_file[slot].exchange(
+        total, std::memory_order_relaxed);
+    if (total > old) {
+        pimpl_->total_chunks_done.fetch_add(total - old,
+                                            std::memory_order_relaxed);
+    }
+
     auto& bar = pimpl_->bars[slot];
     bar.set_option(indicators::option::PostfixText{tr(Str::Progress_done)});
     bar.set_progress(100);
     bar.mark_as_completed();
 
-    // Atomically advance the overall bar so multiple finishing worker threads
-    // don't race the counter. ProgressBar::set_progress itself is mutex-protected.
-    const size_t total = pimpl_->total_files;
-    const size_t done =
-        pimpl_->files_done.fetch_add(1, std::memory_order_relaxed) + 1;
-    const size_t denom = (total == 0) ? 1 : total;
-    const size_t pct = (done * 100) / denom;
+    pimpl_->files_done.fetch_add(1, std::memory_order_relaxed);
+    advance_overall();
+}
+
+void ProgressTracker::advance_overall() {
+    if (pimpl_->plain) return;
+    const size_t total = pimpl_->total_chunks_all.load(std::memory_order_relaxed);
+    if (total == 0) {
+        return;
+    }
+    size_t done = pimpl_->total_chunks_done.load(std::memory_order_relaxed);
+    size_t clamped = std::min(done, total);
+    size_t pct = (clamped * 100) / total;
     pimpl_->bars[0].set_option(indicators::option::PostfixText{
-        std::to_string(done) + "/" + std::to_string(total)});
+        std::to_string(clamped) + "/" + std::to_string(total)});
     pimpl_->bars[0].set_progress(std::min<size_t>(pct, 100));
 }
 
@@ -229,16 +276,12 @@ void ProgressTracker::finish() {
         pimpl_->finished = true;
         return;
     }
-    // Force overall bar to 100% so the final screen looks complete regardless of
-    // how the caller counted files_done.
     pimpl_->bars[0].set_option(indicators::option::PostfixText{
         std::to_string(pimpl_->total_files) + "/" +
         std::to_string(pimpl_->total_files)});
     pimpl_->bars[0].set_progress(100);
     pimpl_->bars[0].mark_as_completed();
 
-    // One trailing newline so subsequent CLI output starts on a fresh line below
-    // the multi-bar block. Then restore the cursor visibility.
     std::cout << "\n";
     if (color_enabled()) {
         indicators::show_console_cursor(true);
@@ -262,11 +305,7 @@ ProgressTracker::make_callback(size_t file_idx, size_t chunk_size) {
         if (chunks_done > total) {
             chunks_done = total;
         }
-        const size_t pct = (chunks_done * 100) / total;
-        auto& bar = self->pimpl_->bars[slot];
-        bar.set_option(indicators::option::PostfixText{
-            std::to_string(chunks_done) + "/" + std::to_string(total)});
-        bar.set_progress(std::min<size_t>(pct, 100));
+        self->update_file(slot - 1, chunks_done);
     };
 }
 
