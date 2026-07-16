@@ -234,7 +234,6 @@ ExitCode execute_encrypt(const EncryptForm& f) {
     args.jobs            = parse_jobs(f.jobs);
     args.jobs_explicit   = !f.jobs.empty() && f.jobs != "0";
     args.chunk_size      = static_cast<uint32_t>(DEFAULT_CHUNK_SIZE);
-    args.quiet           = true;
     ExitCode rc = ExitCode::Internal;
     try {
         rc = run_encrypt(args, tracker);
@@ -273,7 +272,6 @@ ExitCode execute_decrypt(const DecryptForm& f) {
     args.jobs            = parse_jobs(f.jobs);
     args.jobs_explicit   = !f.jobs.empty() && f.jobs != "0";
     args.chunk_size      = static_cast<uint32_t>(DEFAULT_CHUNK_SIZE);
-    args.quiet           = true;
     ExitCode rc = ExitCode::Internal;
     try {
         rc = run_decrypt(args, tracker);
