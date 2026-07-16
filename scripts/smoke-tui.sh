@@ -90,48 +90,42 @@ grep -q "退出 (Quit)"     "$clean_f" || { ok=1; echo "  missing: 退出 (Quit)
 rm -f "$clean_f"
 report "main menu: 4 items present" "$ok"
 
-# ---------- 4. Encrypt form fields ----------
-echo "--- Test 4: encrypt form fields ---"
+# ---------- 4. Encrypt wizard initial render (step 1/4) ----------
+echo "--- Test 4: encrypt wizard initial render ---"
 clean_f=$( capture_tui zh 3 $'\r' )
 ok=0
-grep -q "加密"              "$clean_f" || { ok=1; echo "  missing: encrypt form title"; }
-grep -q "文件"              "$clean_f" || { ok=1; echo "  missing: files field"; }
-grep -q "压缩算法"          "$clean_f" || { ok=1; echo "  missing: compression section"; }
-grep -q "不压缩"            "$clean_f" || { ok=1; echo "  missing: compress none"; }
-grep -q "lz4 (快)"          "$clean_f" || { ok=1; echo "  missing: lz4"; }
-grep -q "zstd (均衡)"       "$clean_f" || { ok=1; echo "  missing: zstd"; }
-grep -q "压缩级别"          "$clean_f" || { ok=1; echo "  missing: level field"; }
-grep -q "并发数"            "$clean_f" || { ok=1; echo "  missing: jobs field"; }
-grep -q "输出目录"          "$clean_f" || { ok=1; echo "  missing: output dir field"; }
-grep -q "密码 (输入不可见)" "$clean_f" || { ok=1; echo "  missing: password field"; }
-grep -q "确认密码"          "$clean_f" || { ok=1; echo "  missing: confirm password field"; }
-grep -q "确认"              "$clean_f" || { ok=1; echo "  missing: confirm button"; }
-grep -q "取消"              "$clean_f" || { ok=1; echo "  missing: cancel button"; }
+grep -q "加密"               "$clean_f" || { ok=1; echo "  missing: encrypt wizard title"; }
+grep -q "步骤 1/4"           "$clean_f" || { ok=1; echo "  missing: step 1/4 indicator"; }
+grep -q "选择文件"           "$clean_f" || { ok=1; echo "  missing: step title 'select files'"; }
+grep -q "文件浏览器"         "$clean_f" || { ok=1; echo "  missing: file browser"; }
+grep -q "下一步"             "$clean_f" || { ok=1; echo "  missing: Next button"; }
+grep -q "完成"               "$clean_f" || { ok=1; echo "  missing: Finish button"; }
+grep -q "取消"               "$clean_f" || { ok=1; echo "  missing: Cancel button"; }
 rm -f "$clean_f"
-report "encrypt form: all fields present" "$ok"
+report "encrypt wizard: step 1/4 + file browser present" "$ok"
 
-# ---------- 5. Decrypt form fields ----------
-echo "--- Test 5: decrypt form fields ---"
+# ---------- 5. Decrypt wizard initial render (step 1/3) ----------
+echo "--- Test 5: decrypt wizard initial render ---"
 clean_f=$( capture_tui zh 3 $'\x1b[B\r' )
 ok=0
-grep -q "解密"              "$clean_f" || { ok=1; echo "  missing: decrypt form title"; }
-grep -q "文件"              "$clean_f" || { ok=1; echo "  missing: files field"; }
-grep -q "并发数"            "$clean_f" || { ok=1; echo "  missing: jobs field"; }
-grep -q "输出目录"          "$clean_f" || { ok=1; echo "  missing: output dir field"; }
-grep -q "密码 (输入不可见)" "$clean_f" || { ok=1; echo "  missing: password field"; }
-grep -q "确认"              "$clean_f" || { ok=1; echo "  missing: confirm button"; }
-grep -q "取消"              "$clean_f" || { ok=1; echo "  missing: cancel button"; }
+grep -q "解密"               "$clean_f" || { ok=1; echo "  missing: decrypt wizard title"; }
+grep -q "步骤 1/3"           "$clean_f" || { ok=1; echo "  missing: step 1/3 indicator"; }
+grep -q "选择文件"           "$clean_f" || { ok=1; echo "  missing: step title 'select files'"; }
+grep -q "文件浏览器"         "$clean_f" || { ok=1; echo "  missing: file browser"; }
+grep -q "下一步"             "$clean_f" || { ok=1; echo "  missing: Next button"; }
+grep -q "取消"               "$clean_f" || { ok=1; echo "  missing: Cancel button"; }
 rm -f "$clean_f"
-report "decrypt form: all fields present" "$ok"
+report "decrypt wizard: step 1/3 + file browser present" "$ok"
 
-# ---------- 6. List placeholder ----------
-echo "--- Test 6: list placeholder ---"
+# ---------- 6. List picker render ----------
+echo "--- Test 6: list picker render ---"
 clean_f=$( capture_tui zh 3 $'\x1b[B\x1b[B\r' )
 ok=0
-grep -qi "TUI 模式不可用\|List.*not available" "$clean_f" \
-    && report "list placeholder: message present" 0 \
-    || report "list placeholder: missing not-available message" 1
+grep -q "查看"               "$clean_f" || { ok=1; echo "  missing: list picker title"; }
+grep -q "文件浏览器"         "$clean_f" || { ok=1; echo "  missing: file browser"; }
+grep -q "取消"               "$clean_f" || { ok=1; echo "  missing: Cancel button"; }
 rm -f "$clean_f"
+report "list picker: file browser present" "$ok"
 
 # ---------- 7. Wizard flow: navigate to Quit → Enter → exit 0 ----------
 echo "--- Test 7: wizard exit flow ---"
