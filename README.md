@@ -1,5 +1,7 @@
 # lock
 
+**简体中文** | [English](README.en.md)
+
 `lock` 是一个用 C++20 编写的命令行文件加密工具，使用 **AES-256-CTR** 对文件内容做多线程并行加密，使用 **AES-256-GCM** 对原始文件名加密（使其在加密后不可见），并以 **HMAC-SHA256** 对整个文件做完整性认证。密钥通过 **scrypt** KDF 从用户口令派生。支持可选的 **LZ4 / zstd** 压缩-后-加密(compress-then-encrypt):通过 `--compress` / `-z` / `--fast` 在加密前对每个 chunk 独立压缩,解密时自动识别压缩算法并还原。
 
 构建工具链：**Clang + LLD + ThinLTO + Ninja + CMake**。
