@@ -53,15 +53,16 @@
 - **（可选）GNU readline + libtinfo** — 提供 `--cli` REPL 的历史与 Tab 补全；探测不到时 CMake 自动降级为 `std::getline` 模式（无历史、无补全），其它功能不受影响
 - **LZ4 v1.9.4 / zstd v1.5.7 / ftxui v5.0.0** 均由 CMake
   `FetchContent` 自动拉取并静态构建，无需系统预装；首次 `cmake` 配置会从
-  GitHub clone，之后增量复用 `build/_deps/`
+  GitHub 下载 (URL tarball)，之后增量复用 `build/_deps/`
 
-`CMakePresets.json` 自带三个 preset：
+`CMakePresets.json` 自带四个 preset：
 
 | preset | 目标架构 | 链接方式 | 用途 |
 |---|---|---|---|
 | `default`         | host (x86_64 / aarch64) | 动态           | 主开发路径，产物在 `build/ae-locker` |
 | `debug`           | host                    | 动态，无 ThinLTO | 调试 |
 | `aarch64-static`  | aarch64 Linux           | **全静态** (`-static-pie`，无 `NEEDED`) | x86_64 主机交叉编译，产物在 `build-aarch64/ae-locker` |
+| `x86_64-static`   | x86_64 Linux            | **全静态** (`-static-pie`，无 `NEEDED`) | x86_64 主机原生全静态，产物在 `build-x86_64-static/ae-locker` |
 
 所有 preset 共享：
 
@@ -69,8 +70,8 @@
 - `-fuse-ld=lld` + `--ld-path=$(which ld.lld)`
 - `-Wall -Wextra -Wpedantic -Werror -Wconversion -Wimplicit-int-conversion -Wshadow`
 
-> 三个 preset **互不冲突**：`default` / `debug` 产出在 `build/`，`aarch64-static`
-> 产出在 `build-aarch64/`，cache 完全隔离，可以在同一棵源码树里来回切。
+> 四个 preset **互不冲突**：`default` / `debug` 产出在 `build/`，`aarch64-static`
+> 产出在 `build-aarch64/`，`x86_64-static` 产出在 `build-x86_64-static/`，cache 完全隔离，可以在同一棵源码树里来回切。
 
 ### Debian / Ubuntu — x86_64 主机（最常见）
 
@@ -84,6 +85,23 @@ cmake --build build          # 增量编译
 
 `libreadline-dev` 可省略 — CMake 探测不到 readline 会自动降级到 `std::getline`
 的 REPL 模式（无历史、无 Tab 补全），其它功能不受影响。
+
+### Debian / Ubuntu — x86_64 主机原生全静态 binary
+
+虽然 `x86_64-static` preset 默认不交叉（直接在 x86_64 主机上编译），但需要 x86_64 的
+libssl.a / libreadline.a / libtinfo.a / libstdc++.a / libgcc.a 静态库已装：
+
+```bash
+sudo apt install libssl-dev libreadline-dev libtinfo-dev libstdc++-14-dev
+```
+
+然后：
+
+```bash
+cmake --preset x86_64-static
+cmake --build --preset x86_64-static
+# 产物在 build-x86_64-static/ae-locker，无 NEEDED 项，可拷贝到任意 x86_64 Linux (glibc 2.31+) 直接跑
+```
 
 ### Debian / Ubuntu — aarch64 native 主机（Raspberry Pi OS 64-bit 等）
 
@@ -101,6 +119,11 @@ cmake --build build
 产物为动态链接 binary，依赖同机 `libssl.so.3` / `libstdc++.so.6` / `libreadline.so.8`
 等；把 `ae-locker` 拷到同发行版同代 glibc 的 aarch64 机器上跑需要先 `apt install`
 对应运行时库（或者改用下述交叉编译的静态产物）。
+
+> 注意：在 aarch64 主机上 `cmake --preset aarch64-static` **不适用**——`cmake/aarch64-linux-gnu.cmake`
+> 工具链文件写死了 `--target=aarch64-linux-gnu` 与 arm64 multiarch 路径，在 aarch64 原生
+> 主机上不能直接使用。如需 aarch64 全静态 binary，目前没有专门为 aarch64 原生主机准备的
+> 全静态 preset。
 
 ### Debian / Ubuntu — 在 x86_64 主机交叉编译 aarch64 **静态** binary
 
@@ -772,7 +795,7 @@ peak_memory = O((N + 1) × chunk_size)
 ```
 .
 ├── CMakeLists.txt           # 构建配置（FetchContent lz4/zstd/ftxui、ThinLTO、LLD）
-├── CMakePresets.json        # presets: default / debug / aarch64-static
+├── CMakePresets.json        # presets: default / debug / aarch64-static / x86_64-static
 ├── cmake/
 │   └── aarch64-linux-gnu.cmake  # aarch64 cross toolchain (-static-pie, multiarch .a)
 ├── .clang-format
@@ -814,6 +837,7 @@ peak_memory = O((N + 1) × chunk_size)
 │   └── smoke-tui.sh         # TUI 冒烟测试（8 步）
 ├── dist/arch/{x86_64,aarch64}/ae-locker  # 产物副本（gitignore 实物 binary；只保留目录占位）
 ├── build/                   # default preset 产物（gitignore）
+├── build-x86_64-static/    # x86_64-static preset 产物（gitignore）
 └── build-aarch64/           # aarch64-static preset 产物（gitignore）
 ```
 
@@ -828,23 +852,24 @@ peak_memory = O((N + 1) × chunk_size)
 ## 跨架构产物 (`dist/arch/`)
 
 通过 `cmake --preset aarch64-static` 可在 x86_64 主机为 aarch64 Linux 交叉编译一
-个 **single static-pie binary**。两个架构的产物可以并存在 `dist/arch/<arch>/ae-locker`:
+个 **single static-pie binary**；通过 `cmake --preset x86_64-static` 可在 x86_64
+主机上编译 x86_64 全静态 binary。两个架构的产物均为全静态，并存在 `dist/arch/<arch>/ae-locker`:
 
 ```
 dist/
 └── arch/
-    ├── x86_64/ae-locker        ← cmake --preset default 的产出（动态链接）
+    ├── x86_64/ae-locker        ← cmake --preset x86_64-static 的产出（全静态 -static-pie）
     └── aarch64/ae-locker       ← cmake --preset aarch64-static 的产出（全静态）
 ```
 
 | 架构 | preset | 链接方式 | 体积 | 大小依赖 |
 |---|---|---|---|---|
-| x86_64  | `default`        | 动态 (OpenSSL / readline / glibc / libstdc++) | ~1.7 MB | 目标机需装同版本 OpenSSL 3.x / readline |
+| x86_64  | `x86_64-static`  | 全静态 (`-static-pie`)，无任何 `NEEDED` 项 | ~11 MB | 无依赖，拷过去就跑 |
 | aarch64 | `aarch64-static` | 全静态 (`-static-pie`)，无任何 `NEEDED` 项 | ~11 MB | 无依赖，拷过去就跑 |
 
 ### 支持范围
 
-- **x86_64 产物**：标准 x86_64 Linux（glibc 2.31+，OpenSSL 3.x）。在 Debian/Ubuntu/RHEL/Fedora 等标准发行版上测试通过。
+- **x86_64 产物**：标准 x86_64 Linux（glibc 2.31+）。在 Debian/Ubuntu/RHEL/Fedora 等标准发行版上测试通过。
 - **aarch64 产物**：标准 aarch64 Linux（glibc 2.31+），**包括但不限于**：
 
   - Debian/Ubuntu/Raspberry Pi OS 64-bit / Alpine aarch64 glibc 版本 / 任何 aarch64 Linux 发行版

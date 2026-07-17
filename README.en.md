@@ -51,15 +51,16 @@ Build toolchain: **Clang + LLD + ThinLTO + Ninja + CMake**.
 - **CMake 3.25+** (preset uses `CMAKE_CXX_COMPILER_TARGET` and other 3.25+-only toolchain features)
 - **OpenSSL 3.x** (provides `EVP_KDF_scrypt`, `EVP_MAC`)
 - **(Optional) GNU readline + libtinfo** — provides history and Tab completion for the `--cli` REPL; when not detected, CMake automatically degrades to `std::getline` mode (no history, no completion); other features are unaffected
-- **LZ4 v1.9.4 / zstd v1.5.7 / ftxui v5.0.0** are all fetched and statically built by CMake `FetchContent`; no system pre-install needed. First `cmake` configure clones them from GitHub; subsequent builds reuse `build/_deps/`
+- **LZ4 v1.9.4 / zstd v1.5.7 / ftxui v5.0.0** are all fetched and statically built by CMake `FetchContent`; no system pre-install needed. First `cmake` configure downloads them from GitHub (URL tarball); subsequent builds reuse `build/_deps/`
 
-`CMakePresets.json` ships three presets:
+`CMakePresets.json` ships four presets:
 
 | Preset | Target arch | Linking | Purpose |
 |---|---|---|---|
 | `default`         | host (x86_64 / aarch64) | dynamic             | Main dev path; output at `build/ae-locker` |
 | `debug`           | host                    | dynamic, no ThinLTO | Debugging |
 | `aarch64-static`  | aarch64 Linux           | **fully static** (`-static-pie`, no `NEEDED`) | Cross-compile from x86_64 host; output at `build-aarch64/ae-locker` |
+| `x86_64-static`   | x86_64 Linux            | **fully static** (`-static-pie`, no `NEEDED`) | Native fully static build on x86_64 host; output at `build-x86_64-static/ae-locker` |
 
 All presets share:
 
@@ -67,7 +68,7 @@ All presets share:
 - `-fuse-ld=lld` + `--ld-path=$(which ld.lld)`
 - `-Wall -Wextra -Wpedantic -Werror -Wconversion -Wimplicit-int-conversion -Wshadow`
 
-> The three presets **do not conflict**: `default` / `debug` output under `build/`, `aarch64-static` outputs under `build-aarch64/`, caches are fully isolated, and you can switch between them in the same source tree.
+> The four presets **do not conflict**: `default` / `debug` output under `build/`, `aarch64-static` outputs under `build-aarch64/`, `x86_64-static` outputs under `build-x86_64-static/`, caches are fully isolated, and you can switch between them in the same source tree.
 
 ### Debian / Ubuntu — x86_64 host (most common)
 
@@ -81,6 +82,24 @@ cmake --build build          # Incremental build
 
 `libreadline-dev` can be omitted — if CMake doesn't detect readline, it automatically degrades to the `std::getline` REPL mode (no history, no Tab completion); other features are unaffected.
 
+### Debian / Ubuntu — x86_64 host fully static binary
+
+Although `x86_64-static` preset does not cross-compile (it builds natively on x86_64), you need
+x86_64 static libs for libssl.a / libreadline.a / libtinfo.a / libstdc++.a / libgcc.a installed:
+
+```bash
+sudo apt install libssl-dev libreadline-dev libtinfo-dev libstdc++-14-dev
+```
+
+Then:
+
+```bash
+cmake --preset x86_64-static
+cmake --build --preset x86_64-static
+# Output at build-x86_64-static/ae-locker, no NEEDED entries, copy to any x86_64 Linux
+# (glibc 2.31+) and run directly
+```
+
 ### Debian / Ubuntu — aarch64 native host (Raspberry Pi OS 64-bit, etc.)
 
 On an aarch64 host, `cmake --preset default` works out of the box — clang's default target on aarch64 hosts is `aarch64-linux-gnu`, fully compatible with the preset. The install and build commands are identical to the x86_64 host path:
@@ -93,6 +112,11 @@ cmake --build build
 ```
 
 The output is a dynamically-linked binary, depending on the same-machine `libssl.so.3` / `libstdc++.so.6` / `libreadline.so.8` etc.; to run `ae-locker` on another aarch64 machine with the same distro / glibc generation you'll need to `apt install` the corresponding runtime libs first (or use the cross-compiled static artifact below).
+
+> Note: `cmake --preset aarch64-static` **does not apply** on an aarch64 native host — the
+> `cmake/aarch64-linux-gnu.cmake` toolchain file hard-codes `--target=aarch64-linux-gnu` and
+> arm64 multiarch paths, which are not suitable on a native aarch64 host. There is currently
+> no dedicated aarch64-native fully static preset.
 
 ### Debian / Ubuntu — Cross-compile aarch64 **static** binary on x86_64 host
 
@@ -761,7 +785,7 @@ The decrypt temp file is named `<output>.lockdec.tmp`, in the same dir as the fi
 ```
 .
 ├── CMakeLists.txt           # build config (FetchContent lz4/zstd/ftxui, ThinLTO, LLD)
-├── CMakePresets.json        # presets: default / debug / aarch64-static
+├── CMakePresets.json        # presets: default / debug / aarch64-static / x86_64-static
 ├── cmake/
 │   └── aarch64-linux-gnu.cmake  # aarch64 cross toolchain (-static-pie, multiarch .a)
 ├── .clang-format
@@ -803,6 +827,7 @@ The decrypt temp file is named `<output>.lockdec.tmp`, in the same dir as the fi
 │   └── smoke-tui.sh         # TUI smoke test (8 steps)
 ├── dist/arch/{x86_64,aarch64}/ae-locker  # artifact copies (gitignore the binary; keep dir placeholders)
 ├── build/                   # default preset output (gitignore)
+├── build-x86_64-static/    # x86_64-static preset output (gitignore)
 └── build-aarch64/           # aarch64-static preset output (gitignore)
 ```
 
@@ -816,23 +841,23 @@ The decrypt temp file is named `<output>.lockdec.tmp`, in the same dir as the fi
 
 ## Cross-arch Artifacts (`dist/arch/`)
 
-Cross-compile a **single static-pie binary** for aarch64 Linux on an x86_64 host via `cmake --preset aarch64-static`. Both architectures' artifacts can coexist at `dist/arch/<arch>/ae-locker`:
+Cross-compile a **single static-pie binary** for aarch64 Linux on an x86_64 host via `cmake --preset aarch64-static`; compile a fully static x86_64 binary via `cmake --preset x86_64-static`. Both architectures' artifacts are fully static and coexist at `dist/arch/<arch>/ae-locker`:
 
 ```
 dist/
 └── arch/
-    ├── x86_64/ae-locker        ← output of cmake --preset default (dynamic)
+    ├── x86_64/ae-locker        ← output of cmake --preset x86_64-static (fully static, -static-pie)
     └── aarch64/ae-locker       ← output of cmake --preset aarch64-static (full static)
 ```
 
 | Arch | Preset | Linking | Size | Runtime deps |
 |---|---|---|---|---|
-| x86_64  | `default`        | dynamic (OpenSSL / readline / glibc / libstdc++) | ~1.7 MB | target needs same OpenSSL 3.x / readline |
+| x86_64  | `x86_64-static`  | full static (`-static-pie`), no `NEEDED` entries | ~11 MB | none — copy and run |
 | aarch64 | `aarch64-static` | full static (`-static-pie`), no `NEEDED` entries | ~11 MB | none — copy and run |
 
 ### Supported Range
 
-- **x86_64 artifact**: standard x86_64 Linux (glibc 2.31+, OpenSSL 3.x). Tested on Debian/Ubuntu/RHEL/Fedora etc.
+- **x86_64 artifact**: standard x86_64 Linux (glibc 2.31+). Tested on Debian/Ubuntu/RHEL/Fedora etc.
 - **aarch64 artifact**: standard aarch64 Linux (glibc 2.31+), **including but not limited to**:
 
   - Debian/Ubuntu/Raspberry Pi OS 64-bit / Alpine aarch64 glibc variants / any aarch64 Linux distro
