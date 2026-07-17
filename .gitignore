@@ -1,6 +1,7 @@
 # Build artifacts
 /build/
 /build-aarch64/
+/build-x86_64-static/
 /compile_commands.json
 /ae-locker
 

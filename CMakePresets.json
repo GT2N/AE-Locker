@@ -35,11 +35,25 @@
         "ENABLE_THINLTO": "ON",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
+    },
+    {
+      "name": "x86_64-static",
+      "displayName": "x86_64-linux-gnu — fully static link (native)",
+      "description": "Compile `ae-locker` for x86_64 Linux with host clang + LLD + ThinLTO; OpenSSL / readline / glibc / libstdc++ / libgcc / lz4 / zstd / ftxui all linked as .a. Binary has no NEEDED entries (static-pie, ET_DYN).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-x86_64-static",
+      "toolchainFile": "${sourceDir}/cmake/x86_64-linux-gnu.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_THINLTO": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "default", "configurePreset": "default" },
     { "name": "debug", "configurePreset": "debug" },
-    { "name": "aarch64-static", "configurePreset": "aarch64-static" }
+    { "name": "aarch64-static", "configurePreset": "aarch64-static" },
+    { "name": "x86_64-static", "configurePreset": "x86_64-static" }
   ]
 }
