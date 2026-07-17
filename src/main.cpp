@@ -1,5 +1,6 @@
 #include <ae-locker/cli.hpp>
 #include <ae-locker/errors.hpp>
+#include <ae-locker/term.hpp>
 
 #include <exception>
 #include <iostream>
@@ -39,6 +40,15 @@ char tls_align_pad_64_[64] = {};
 }
 
 int main(int argc, char** argv) {
+    // Install async-signal-safe terminal cleanup BEFORE anything else so
+    // SIGINT/SIGTERM/SIGQUIT/SIGHUP/SIGPIPE during the rest of startup
+    // (password prompt, KDF, etc) still restore termios + reset ANSI state.
+    // The default-terminate path skips RAII (EchoGuard), so this is the
+    // only mechanism that prevents ECHO-disabled / alt-screen-leaked
+    // shells on Ctrl-C. Failure is non-fatal: it just means we degrade to
+    // the pre-fix RAII-only behaviour for the (rare) case where sigaction
+    // returns EINVAL/ENOMEM.
+    (void)ae_locker::term::install_signal_handlers();
     try {
         return ae_locker::cli_main(argc, argv);
     } catch (const std::exception& e) {

@@ -44,4 +44,23 @@ struct FdGuard {
     FdGuard() = default;
 };
 
+// Publish a pointer to the saved termios state so a signal handler can
+// restore it even when stack unwinding does not run (default-terminated
+// SIGINT/SIGTERM/...). Must be called ONLY with the address of a termios
+// whose contents are already valid for tcsetattr. Pass nullptr to
+// unregister (no-op restore in the handler).
+void register_saved_termios(const struct termios* p) noexcept;
+
+// Async-signal-safe terminal cleanup. Restores the published termios to
+// STDERR/STDIN/STDOUT (and /dev/tty if openable) via tcsetattr, writes the
+// ANSI reset sequence to STDERR, then resets the signal to default and
+// _exit(128 + signo). MUST be async-signal-safe (no malloc, no iostream,
+// no libc stdio).
+[[noreturn]] void restore_terminal_sighandler(int signo) noexcept;
+
+// Install restore_terminal_sighandler for SIGINT, SIGTERM, SIGQUIT, SIGHUP,
+// SIGPIPE using sigaction with SA_RESETHAND (one-shot; no SA_NODEFER, no
+// SA_RESTART). Returns 0 on success, -1 on any failure (errno preserved).
+int install_signal_handlers() noexcept;
+
 }  // namespace ae_locker::term
