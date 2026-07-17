@@ -184,14 +184,14 @@ FetchContent_MakeAvailable(zstd)
 # C++ TUI library (https://github.com/ArthurSonzogni/FTXUI). The repo owner's
 # handle is `ArthurSonzogni` (with a `g`); the project exposes the canonical
 # CMake targets `ftxui::component`, `ftxui::dom`, `ftxui::screen`, and the
-# umbrella `ftxui::ftxui`. We pin GIT_TAG v5.0.0 (the version documented in
-# the README). GIT_SHALLOW keeps the clone minimal.
+# umbrella `ftxui::ftxui`. We pin v5.0.0 (the version documented in the
+# README). Use URL tarball instead of GIT_REPOSITORY to avoid slow git clone
+# (shallow clone hangs index-pack after ~70 MB downloaded; tarball is ~2 MB
+# and extracts deterministically). Matches zstd's URL pattern.
 # -----------------------------------------------------------------------------
 FetchContent_Declare(
     ftxui
-    GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
-    GIT_TAG        v5.0.0
-    GIT_SHALLOW    TRUE
+    URL https://github.com/ArthurSonzogni/FTXUI/archive/refs/tags/v5.0.0.tar.gz
 )
 FetchContent_MakeAvailable(ftxui)
 
