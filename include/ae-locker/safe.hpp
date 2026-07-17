@@ -3,9 +3,9 @@
 #include <string>
 #include <string_view>
 
-#include <lock/term.hpp>
+#include <ae-locker/term.hpp>
 
-namespace lock {
+namespace ae_locker {
 
 enum class PasswordMode {
     Interactive,
@@ -31,4 +31,4 @@ struct PasswordResult {
 // without --no-safe, passwords do not match, password empty, ...).
 [[nodiscard]] PasswordResult acquire_password(const PasswordRequest& req);
 
-}  // namespace lock
+}  // namespace ae_locker

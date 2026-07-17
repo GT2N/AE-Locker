@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Wave C smoke test for lock TUI (--tui).
+# Wave C smoke test for AE-Locker TUI (--tui).
 # Tests:
 #   1. Non-tty → exit 2 + guard message
 #   2. --no-color + pty → exit 2 + colour-guard message
@@ -11,11 +11,11 @@
 #   8. CLI round-trip encrypt/decrypt via password file (regression)
 #
 # Dependencies: script(1) for pty creation, sed for ANSI stripping.
-# Usage: set LOCK=<path> to override the binary path (default: ./build/lock).
+# Usage: set LOCK_BIN=<path> to override the binary path (default: ./build/ae-locker).
 set -euo pipefail
 
-LOCK="${LOCK:-./build/lock}"
-[ -x "$LOCK" ] || { echo "FATAL: $LOCK not found or not executable"; exit 1; }
+LOCK_BIN="${LOCK_BIN:-./build/ae-locker}"
+[ -x "$LOCK_BIN" ] || { echo "FATAL: $LOCK_BIN not found or not executable"; exit 1; }
 
 PASS=0
 FAIL=0
@@ -39,17 +39,17 @@ report() {
 # strips null bytes and can corrupt Unicode text.
 capture_tui() {
     local raw
-    raw=$(mktemp /tmp/lock_tui_raw_XXXXXX)
+    raw=$(mktemp /tmp/ae_locker_tui_raw_XXXXXX)
     local lang="${1:-zh}" timeout_sec="${2:-2}" keystrokes="${3:-}"
     if [ -n "$keystrokes" ]; then
-        timeout "$timeout_sec" script -qec "$LOCK --lang $lang --tui" /dev/null \
+        timeout "$timeout_sec" script -qec "$LOCK_BIN --lang $lang --tui" /dev/null \
             < <(printf '%s' "$keystrokes") > "$raw" 2>/dev/null || true
     else
-        timeout "$timeout_sec" script -qec "$LOCK --lang $lang --tui" /dev/null \
+        timeout "$timeout_sec" script -qec "$LOCK_BIN --lang $lang --tui" /dev/null \
             > "$raw" 2>/dev/null || true
     fi
     local clean
-    clean=$(mktemp /tmp/lock_tui_clean_XXXXXX)
+    clean=$(mktemp /tmp/ae_locker_tui_clean_XXXXXX)
     sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$raw" | tr -d '\0' > "$clean"
     rm -f "$raw"
     echo "$clean"
@@ -58,7 +58,7 @@ capture_tui() {
 # ---------- 1. Non-tty → exit 2 ----------
 echo "--- Test 1: non-tty guard ---"
 rc=0
-err_output=$( "$LOCK" --lang zh --tui 2>&1 ) || rc=$?
+err_output=$( "$LOCK_BIN" --lang zh --tui 2>&1 ) || rc=$?
 if [ $rc -eq 2 ]; then
     echo "$err_output" | grep -qiE "(TUI 模式需要交互式终端|TUI mode requires.*tty)" \
         && report "non-tty: exit code 2 + guard message" 0 \
@@ -70,7 +70,7 @@ fi
 # ---------- 2. --no-color + pty → exit 2 ----------
 echo "--- Test 2: --no-color guard ---"
 rc=0
-err_output=$( script -qec "$LOCK --lang zh --tui --no-color" /dev/null 2>&1 ) || rc=$?
+err_output=$( script -qec "$LOCK_BIN --lang zh --tui --no-color" /dev/null 2>&1 ) || rc=$?
 if [ $rc -eq 2 ]; then
     echo "$err_output" | grep -qiE "(TUI 模式需要彩色支持|TUI mode requires colour)" \
         && report "--no-color: exit code 2 + colour-guard message" 0 \
@@ -131,7 +131,7 @@ report "list picker: file browser present" "$ok"
 echo "--- Test 7: wizard exit flow ---"
 rc=0
 # 3× Down arrow (to Quit) + Enter (select Quit) → screen.Exit → ExitCode::Ok
-printf '\x1b[B\x1b[B\x1b[B\r' | script -qec "$LOCK --lang zh --tui" /dev/null 2>/dev/null || rc=$?
+printf '\x1b[B\x1b[B\x1b[B\r' | script -qec "$LOCK_BIN --lang zh --tui" /dev/null 2>/dev/null || rc=$?
 if [ $rc -eq 0 ]; then
     report "wizard flow: navigate to Quit → exit 0" 0
 else
@@ -140,23 +140,23 @@ fi
 
 # ---------- 8. CLI round-trip (regression) ----------
 echo "--- Test 8: CLI encrypt/decrypt round-trip ---"
-WORKDIR=$(mktemp -d /tmp/lock_wavec_XXXXXX)
+WORKDIR=$(mktemp -d /tmp/ae_locker_wavec_XXXXXX)
 trap 'rm -rf "$WORKDIR"' EXIT
 
-echo "Hello lock Wave C round-trip test. 日本語もOK。" > "$WORKDIR/plain.txt"
+echo "Hello AE-Locker Wave C round-trip test. 日本語もOK。" > "$WORKDIR/plain.txt"
 echo -n 'waveC-password-123' > "$WORKDIR/pw.txt"
 
-"$LOCK" encrypt "$WORKDIR/plain.txt" \
+"$LOCK_BIN" encrypt "$WORKDIR/plain.txt" \
     -o "$WORKDIR/out/" \
     -j 1 \
     -p "$WORKDIR/pw.txt" --no-safe \
     2>/dev/null \
     || { report "encrypt round-trip: command failed" 1; false; }
 
-[ -f "$WORKDIR/out/plain.txt.locked" ] \
-    || { report "encrypt round-trip: .locked not created" 1; false; }
+[ -f "$WORKDIR/out/plain.txt.ae-locked" ] \
+    || { report "encrypt round-trip: .ae-locked not created" 1; false; }
 
-"$LOCK" decrypt "$WORKDIR/out/plain.txt.locked" \
+"$LOCK_BIN" decrypt "$WORKDIR/out/plain.txt.ae-locked" \
     -o "$WORKDIR/dec/" \
     -j 1 \
     -p "$WORKDIR/pw.txt" --no-safe \

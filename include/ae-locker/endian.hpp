@@ -2,10 +2,10 @@
 
 #include <cstdint>
 
-namespace lock::endian {
+namespace ae_locker::endian {
 
 // Read/write big-endian integers from/to byte buffers.
-// All fields in the .locked file are big-endian (network byte order).
+// All fields in the .ae-locked file are big-endian (network byte order).
 //
 // We deliberately widen to the *next* unsigned type before shifting so that
 // integer promotion never yields a `signed int` (which would trigger
@@ -56,4 +56,4 @@ inline void store_be64(unsigned char* p, uint64_t v) {
     p[7] = static_cast<unsigned char>(v);
 }
 
-}  // namespace lock::endian
+}  // namespace ae_locker::endian

@@ -1,4 +1,4 @@
-#include <lock/kdf.hpp>
+#include <ae-locker/kdf.hpp>
 
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
@@ -13,7 +13,7 @@
 #include <memory>
 #include <string>
 
-namespace lock {
+namespace ae_locker {
 
 namespace {
 
@@ -117,4 +117,4 @@ std::vector<unsigned char> random_bytes(size_t n) {
     return out;
 }
 
-}  // namespace lock
+}  // namespace ae_locker

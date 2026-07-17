@@ -1,4 +1,4 @@
-// lock::repl — GNU readline + Tab completion bridge for the `lock --cli` REPL.
+// ae_locker::repl — GNU readline + Tab completion bridge for the `lock --cli` REPL.
 //
 // All direct linkage against libreadline (and its typical companion libtinfo)
 // lives here. cli.cpp calls the two entry points declared in repl.hpp and
@@ -16,10 +16,10 @@
 //   * `--lang <TAB>`: en/zh.
 //   * Everything else: return nullptr so readline falls back to its built-in
 //     filename completion (rl_filename_completion_function).
-#include <lock/repl.hpp>
+#include <ae-locker/repl.hpp>
 
 #if LOCK_HAVE_READLINE
-#include <lock/i18n.hpp>
+#include <ae-locker/i18n.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -33,7 +33,7 @@ extern "C" {
 #include <readline/readline.h>
 }
 
-namespace lock {
+namespace ae_locker {
 namespace {
 
 // ---- Static candidate tables ----------------------------------------------
@@ -394,7 +394,7 @@ void repl_install_completer() noexcept {
     rl_completion_query_items = 0;  // never ask before listing many entries
 }
 
-}  // namespace lock
+}  // namespace ae_locker
 
 #else  // !LOCK_HAVE_READLINE
 
@@ -402,7 +402,7 @@ void repl_install_completer() noexcept {
 // never get called (cli.cpp guards the calls with #if LOCK_HAVE_READLINE).
 // They exist purely so the symbol exists for the linker when something ever
 // evolves to call them unconditionally.
-namespace lock {
+namespace ae_locker {
 
 bool repl_readline(std::string /*prompt*/, std::string& out) {
     out.clear();
@@ -412,6 +412,6 @@ bool repl_readline(std::string /*prompt*/, std::string& out) {
 void repl_install_completer() noexcept {
 }
 
-}  // namespace lock
+}  // namespace ae_locker
 
 #endif  // LOCK_HAVE_READLINE

@@ -3,7 +3,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-namespace lock::term {
+namespace ae_locker::term {
 
 // Captures termios state so restore_echo() can put it back.
 // `valid` is false until disable_echo() succeeds.
@@ -44,4 +44,4 @@ struct FdGuard {
     FdGuard() = default;
 };
 
-}  // namespace lock::term
+}  // namespace ae_locker::term

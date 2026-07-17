@@ -1,4 +1,4 @@
-#include <lock/memory.hpp>
+#include <ae-locker/memory.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -10,7 +10,7 @@
 #include <unistd.h>
 #endif
 
-namespace lock {
+namespace ae_locker {
 
 namespace {
 
@@ -119,4 +119,4 @@ unsigned recommend_jobs(unsigned user_jobs,
     return static_cast<unsigned>(max_workers);
 }
 
-}  // namespace lock
+}  // namespace ae_locker

@@ -5,9 +5,9 @@
 #include <span>
 #include <vector>
 
-#include <lock/constants.hpp>
+#include <ae-locker/constants.hpp>
 
-namespace lock {
+namespace ae_locker {
 
 [[nodiscard]] const char* compression_id_name(CompressionId id) noexcept;
 
@@ -25,4 +25,4 @@ namespace lock {
     std::span<const unsigned char> src,
     size_t                         expected_size);
 
-}  // namespace lock
+}  // namespace ae_locker

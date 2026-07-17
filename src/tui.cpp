@@ -1,4 +1,4 @@
-// lock::tui — ftxui-driven menu UI.
+// ae_locker::tui — ftxui-driven menu UI.
 //
 // Wave D replaces Wave B's single-screen forms with multi-step wizards:
 //   - Encrypt: 4 steps — files / compression / output+concurrency / password.
@@ -17,17 +17,17 @@
 //      in the plain (non-alt-screen) terminal so stdout/stderr/progress reach
 //      the user directly; afterwards an Enter-to-continue prompt is shown.
 //   4. The TUI then loops back to the main menu so the user can start another
-//      operation without re-running `lock --tui`.
+//      operation without re-running `ae-locker --tui`.
 //
 // Cancel/Esc inside any wizard returns to the main menu (not re-execute).
 // Quit from the main menu exits with ExitCode::Ok.
 //
 // Wave A's stdin/stderr tty + colour guards inside run_tui() are preserved
 // untouched.
-#include <lock/tui.hpp>
+#include <ae-locker/tui.hpp>
 
-#include <lock/cli_dispatch.hpp>
-#include <lock/i18n.hpp>
+#include <ae-locker/cli_dispatch.hpp>
+#include <ae-locker/i18n.hpp>
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
@@ -48,7 +48,7 @@
 #include <unistd.h>
 #include <vector>
 
-namespace lock::tui {
+namespace ae_locker::tui {
 
 namespace {
 
@@ -67,7 +67,7 @@ enum class Disposition {
     Quit,         // (kept for legacy callers; only Quit())
     RunEncrypt,   // execute the captured encrypt form
     RunDecrypt,   // execute the captured decrypt form
-    RunList,      // execute run_list with selected .locked files
+    RunList,      // execute run_list with selected .ae-locked files
     Cancelled,    // user pressed Cancel/Esc; return to main menu
 };
 
@@ -317,7 +317,7 @@ std::filesystem::path initial_browser_dir() {
 // Read the directory listing of `st.cwd` into `out`, sorted with
 // directories first (then files alphabetically), `..` always at the top
 // unless already at root.  Skips symlinks/special files; when
-// `st.only_dot_locked` is true, plain files without a `.locked` suffix are
+// `st.only_dot_locked` is true, plain files without a `.ae-locked` suffix are
 // also hidden so the picker shows only decryptable candidates.
 bool collect_entries(FileBrowserState& st,
                      std::vector<BrowserEntry>& out) {
@@ -340,13 +340,13 @@ bool collect_entries(FileBrowserState& st,
         // Skip everything that is neither dir nor regular (symlinks,
         // sockets, fifos, devices, broken entries).
         if (!is_dir && !is_reg) continue;
-        // Filter: when listing for *.locked selection, hide files that don't
-        // end with ".locked"; directories are always shown (for navigation).
+        // Filter: when listing for *.ae-locked selection, hide files that don't
+        // end with ".ae-locked"; directories are always shown (for navigation).
         if (st.only_dot_locked && is_reg) {
             const auto& p = entry.path();
             auto fname = p.filename().string();
-            if (fname.size() < 7 ||
-                fname.compare(fname.size() - 7, 7, ".locked") != 0) {
+            if (fname.size() < 10 ||
+                fname.compare(fname.size() - 10, 10, ".ae-locked") != 0) {
                 continue;
             }
         }
@@ -912,7 +912,7 @@ Disposition show_decrypt_wizard(DecryptForm& form) {
 // ---------------------------------------------------------------------------
 // List picker — a single-screen file browser + "View" button; on View,
 // screen.Exit() returns Disposition::RunList and the orchestrator runs
-// `run_list` with the selected .locked files (output to plain stdout).
+// `run_list` with the selected .ae-locked files (output to plain stdout).
 // ---------------------------------------------------------------------------
 Disposition show_list_picker(std::vector<std::string>& out_files) {
     FileBrowserState st;
@@ -1097,4 +1097,4 @@ ExitCode run_tui() {
     }
 }
 
-}  // namespace lock::tui
+}  // namespace ae_locker::tui

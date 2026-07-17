@@ -1,12 +1,12 @@
-#include <lock/container.hpp>
-#include <lock/endian.hpp>
-#include <lock/constants.hpp>
+#include <ae-locker/container.hpp>
+#include <ae-locker/endian.hpp>
+#include <ae-locker/constants.hpp>
 #include <stdexcept>
 #include <fstream>
 #include <vector>
 #include <cstring>
 
-namespace lock {
+namespace ae_locker {
 
 // ---------------------------------------------------------------------------
 // HeaderWriter
@@ -228,4 +228,4 @@ bool HeaderReader::is_locked_file(const std::string& path) {
     return std::memcmp(first16, MAGIC.data(), 16) == 0;
 }
 
-}  // namespace lock
+}  // namespace ae_locker

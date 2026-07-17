@@ -1,11 +1,11 @@
-// lock::i18n — minimal table-driven internationalisation (en / zh) plus
+// ae_locker::i18n — minimal table-driven internationalisation (en / zh) plus
 // ANSI-colour helpers for stderr diagnostics.  No gettext / ICU dependency;
 // the look-up is a single array index into a per-language const char* table.
 //
 // Usage:
-//   lock::I18n::init(Lang::En);            // set at startup (cli_main)
-//   std::cerr << lock::color_error(lock::tr(Str::Err_output_exists));
-//   if (lock::current() == Lang::Zh) { ... }
+//   ae_locker::I18n::init(Lang::En);            // set at startup (cli_main)
+//   std::cerr << ae_locker::color_error(ae_locker::tr(Str::Err_output_exists));
+//   if (ae_locker::current() == Lang::Zh) { ... }
 //
 // Colour policy:
 //   - enable_color_if_tty() probes isatty(STDERR_FILENO) + NO_COLOR +
@@ -19,7 +19,7 @@
 #include <string>
 #include <string_view>
 
-namespace lock {
+namespace ae_locker {
 
 // ---------------------------------------------------------------------------
 // Language tag.
@@ -344,4 +344,4 @@ void enable_color_if_tty() noexcept;
 // scripts that pipe stderr to a captured file).
 void force_color_on_for_tests() noexcept;
 
-}  // namespace lock
+}  // namespace ae_locker

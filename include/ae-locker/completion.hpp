@@ -1,4 +1,4 @@
-// lock::completion — runtime generation of shell tab-completion scripts for
+// ae_locker::completion — runtime generation of shell tab-completion scripts for
 // `lock`.  This is Wave B's offline generator: it produces a fully-installed
 // -ready script (bash / zsh / fish) purely by string assembly from the CLI's
 // own known grammar — no sub-shell spawn, no network calls, no third-party
@@ -16,7 +16,7 @@
 #include <string>
 #include <string_view>
 
-namespace lock {
+namespace ae_locker {
 
 // Supported shell targets for `lock --completion <shell>`.  Order is used
 // by `supported_shells_help()` to render the "(choose: bash, zsh, fish)"
@@ -56,4 +56,4 @@ void print_completion(CompletionShell shell, std::ostream& out);
 [[nodiscard]] bool print_completion_for(std::string_view shell_name,
                                         std::ostream& out);
 
-}  // namespace lock
+}  // namespace ae_locker

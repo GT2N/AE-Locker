@@ -1,11 +1,11 @@
-#include <lock/term.hpp>
+#include <ae-locker/term.hpp>
 
 #include <fcntl.h>
 #include <unistd.h>
 
 #include <stdexcept>
 
-namespace lock::term {
+namespace ae_locker::term {
 
 void disable_echo(int fd, TermiosState& state) {
     if (tcgetattr(fd, &state.original) != 0) {
@@ -47,4 +47,4 @@ FdGuard& FdGuard::operator=(FdGuard&& other) noexcept {
     return *this;
 }
 
-}  // namespace lock::term
+}  // namespace ae_locker::term

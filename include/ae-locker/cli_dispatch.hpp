@@ -1,4 +1,4 @@
-// lock::cli_dispatch — public surface of the per-subcommand orchestrators
+// ae_locker::cli_dispatch — public surface of the per-subcommand orchestrators
 // (run_encrypt / run_decrypt / run_list) and their argument bundles.
 //
 // Historically these structs and functions lived inside an anonymous
@@ -19,12 +19,12 @@
 #include <string>
 #include <vector>
 
-#include <lock/constants.hpp>   // CompressionId, DEFAULT_CHUNK_SIZE
-#include <lock/errors.hpp>       // ExitCode
-#include <lock/progress.hpp>     // ProgressTracker
-#include <lock/safe.hpp>         // PasswordMode
+#include <ae-locker/constants.hpp>   // CompressionId, DEFAULT_CHUNK_SIZE
+#include <ae-locker/errors.hpp>       // ExitCode
+#include <ae-locker/progress.hpp>     // ProgressTracker
+#include <ae-locker/safe.hpp>         // PasswordMode
 
-namespace lock {
+namespace ae_locker {
 
 // ---------------------------------------------------------------------------
 // Encrypt orchestration argument bundle.
@@ -86,4 +86,4 @@ struct DecryptCliArgs {
                                    ProgressTracker& tracker);
 [[nodiscard]] ExitCode run_list(const std::vector<std::string>& files);
 
-}  // namespace lock
+}  // namespace ae_locker

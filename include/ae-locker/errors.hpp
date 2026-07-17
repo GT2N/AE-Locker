@@ -1,4 +1,4 @@
-// lock::errors — exit-code enumeration and a typed exception that carries
+// ae_locker::errors — exit-code enumeration and a typed exception that carries
 // one.  Lower-level crypto / container / kdf modules still throw bare
 // std::runtime_error (we deliberately do not touch their algorithm code);
 // cli_main's top-level catch must therefore classify those by inspecting
@@ -11,7 +11,7 @@
 #include <string>
 #include <string_view>
 
-namespace lock {
+namespace ae_locker {
 
 enum class ExitCode : int {
     Ok       = 0,   // success
@@ -34,4 +34,4 @@ private:
     ExitCode code_;
 };
 
-}  // namespace lock
+}  // namespace ae_locker

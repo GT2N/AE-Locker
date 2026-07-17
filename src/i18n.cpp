@@ -1,4 +1,4 @@
-#include <lock/i18n.hpp>
+#include <ae-locker/i18n.hpp>
 
 #include <array>
 #include <atomic>
@@ -10,7 +10,7 @@
 #include <string_view>
 #include <unistd.h>
 
-namespace lock {
+namespace ae_locker {
 
 namespace {
 
@@ -27,18 +27,18 @@ namespace {
 // clang-format off
 constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_strings = {
     // ---- Help / usage ----------------------------------------------------
-    "lock 1.0.0 — AES-256-CTR + HMAC-SHA256 file encryption\n",
-    "Encrypt files into tamper-evident .locked containers.\n",
+    "ae-locker 1.0.0 — AES-256-CTR + HMAC-SHA256 file encryption\n",
+    "Encrypt files into tamper-evident .ae-locked containers.\n",
     "Usage:\n"
-    "  lock <command> [options] <file> [<file> ...]\n"
-    "  lock -c <command> [options] <file> [<file> ...]\n"
-    "  lock --cli\n"
-    "  lock --help | --version\n",
-    "encrypt    Encrypt one or more files into .locked containers\n"
+    "  ae-locker <command> [options] <file> [<file> ...]\n"
+    "  ae-locker -c <command> [options] <file> [<file> ...]\n"
+    "  ae-locker --cli\n"
+    "  ae-locker --help | --version\n",
+    "encrypt    Encrypt one or more files into .ae-locked containers\n"
     "           (supports --auto <dir> for recursive directory batch mode)\n",
-    "decrypt    Decrypt one or more .locked containers\n"
+    "decrypt    Decrypt one or more .ae-locked containers\n"
     "           (supports --auto <dir> for recursive directory batch mode)\n",
-    "list       Print the metadata of a .locked container without decrypting\n",
+    "list       Print the metadata of a .ae-locked container without decrypting\n",
     "Common Options:\n",
     "Encrypt-only Options:\n",
     "Decrypt-only Options:\n",
@@ -66,39 +66,39 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "      --version                Print version and exit\n",
     "  -h, --help                   Print this help and exit\n",
     "# Encrypt a single file (interactive password prompt)\n"
-    "  lock encrypt secret.txt\n",
+    "  ae-locker encrypt secret.txt\n",
     "# Decrypt with -o placing the restored file in ./out/\n"
-    "  lock decrypt secret.txt.locked -o ./out/\n",
+    "  ae-locker decrypt secret.txt.ae-locked -o ./out/\n",
     "# Recursively encrypt all files under ./secrets (mirror subdirs into ./encrypted)\n"
-    "  lock encrypt --auto ./secrets --max-depth 3 -o ./encrypted\n",
-    "# Inspect a .locked container's metadata without decrypting\n"
-    "  lock list secret.txt.locked\n",
+    "  ae-locker encrypt --auto ./secrets --max-depth 3 -o ./encrypted\n",
+    "# Inspect a .ae-locked container's metadata without decrypting\n"
+    "  ae-locker list secret.txt.ae-locked\n",
     "Decrypt also accepts --auto <dir> and --max-depth <N> (see Encrypt-only Options).\n",
-    "Run `lock <cmd> --help` for per-subcommand details.\n",
-    "Encrypt one or more files into tamper-evident .locked containers.\n"
+    "Run `ae-locker <cmd> --help` for per-subcommand details.\n",
+    "Encrypt one or more files into tamper-evident .ae-locked containers.\n"
     "Supports a single file, a list of files, or recursive --auto batch mode.\n",
-    "Decrypt one or more .locked containers, restoring the original file(s).\n"
+    "Decrypt one or more .ae-locked containers, restoring the original file(s).\n"
     "Supports a single file, a list of files, or recursive --auto batch mode.\n",
-    "Print metadata of one or more .locked containers without decrypting.\n"
-    "Safe to run on any file; non-.locked inputs are reported and skipped.\n",
+    "Print metadata of one or more .ae-locked containers without decrypting.\n"
+    "Safe to run on any file; non-.ae-locked inputs are reported and skipped.\n",
     "# Encrypt a single file\n"
-    "  lock encrypt secret.txt\n"
+    "  ae-locker encrypt secret.txt\n"
     "# Compress-then-encrypt with zstd (-z) and a password file\n"
-    "  lock encrypt secret.txt -p pw.txt --no-safe -z -o ./out/\n"
+    "  ae-locker encrypt secret.txt -p pw.txt --no-safe -z -o ./out/\n"
     "# Recursive batch encrypt mirroring the source tree\n"
-    "  lock encrypt --auto ./secrets --max-depth 3 -o ./encrypted\n",
+    "  ae-locker encrypt --auto ./secrets --max-depth 3 -o ./encrypted\n",
     "# Decrypt a single container into ./out/\n"
-    "  lock decrypt secret.txt.locked -o ./out/\n"
+    "  ae-locker decrypt secret.txt.ae-locked -o ./out/\n"
     "# Decrypt with a password file\n"
-    "  lock decrypt secret.txt.locked -p pw.txt --no-safe -o ./out/\n"
+    "  ae-locker decrypt secret.txt.ae-locked -p pw.txt --no-safe -o ./out/\n"
     "# Recursive batch decrypt mirroring the source tree\n"
-    "  lock decrypt --auto ./encrypted -o ./decrypted\n",
-    "# Inspect one or more .locked containers (no password needed)\n"
-    "  lock list secret.txt.locked\n"
-    "# Inspect every .locked file in a directory\n"
-    "  lock list file1.locked file2.locked\n"
-    "# Safe to run on a non-.locked file (reported and skipped)\n"
-    "  lock list plain.txt\n",
+    "  ae-locker decrypt --auto ./encrypted -o ./decrypted\n",
+    "# Inspect one or more .ae-locked containers (no password needed)\n"
+    "  ae-locker list secret.txt.ae-locked\n"
+    "# Inspect every .ae-locked file in a directory\n"
+    "  ae-locker list file1.ae-locked file2.ae-locked\n"
+    "# Safe to run on a non-.ae-locked file (reported and skipped)\n"
+    "  ae-locker list plain.txt\n",
 
     // ---- Common error / status labels ------------------------------------
     "error: ",
@@ -127,7 +127,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "output directory '%s' cannot be created: %s",
     "failed to scan --auto dir '%s'",
     "no eligible files found under '%s'",
-    "'%s' is not a .locked file (bad magic)",
+    "'%s' is not a .ae-locked file (bad magic)",
     "error: ",
     "unknown help topic '%s' (choose: encrypt|decrypt|list)",
 
@@ -175,7 +175,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
 
     // ---- `list` command field labels --------------------------------------
     "File: ",
-    "  (not a .locked file)\n",
+    "  (not a .ae-locked file)\n",
     "  magic:         ENCF0001v1\n",
     "  version:       ",
     "  algorithm:     AES-256-CTR + HMAC-SHA256 (0x",
@@ -198,8 +198,8 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "[memory] available=",
 
     // ---- Version + interactive REPL --------------------------------------
-    "lock 1.0.0",
-    "lock interactive mode\n",
+    "ae-locker 1.0.0",
+    "ae-locker interactive mode\n",
     "> ",
     "Commands: encrypt, decrypt, list, quit\n",
     "  unknown command '",
@@ -219,7 +219,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     // ---- TUI ----
     "TUI mode requires an interactive terminal (tty)",
     "TUI mode requires colour support (don't use --no-color or NO_COLOR)",
-    "lock TUI Main Menu",
+    "ae-locker TUI Main Menu",
     "Encrypt",
     "Decrypt",
     "List",
@@ -252,7 +252,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "Press Enter to continue",
     "List — not available in TUI mode",
     "The `list` subcommand writes to stdout, which conflicts with the\n"
-    "full-screen TUI. Exit the TUI and run `lock list <file>` from the\n"
+    "full-screen TUI. Exit the TUI and run `ae-locker list <file>` from the\n"
     "shell instead.",
 
     // ---- TUI (wizard) ----
@@ -262,7 +262,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "Compression",
     "Output & concurrency",
     "Password",
-    "Select .locked file(s)",
+    "Select .ae-locked file(s)",
     "← Back",
     "Next →",
     "Finish",
@@ -271,25 +271,25 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> en_str
     "Current path",
     "Selected",
     "Cannot read this directory",
-    "Select .locked file(s) to view",
+    "Select .ae-locked file(s) to view",
     "View",
     "Operation done. Press Enter to return to main menu",
 };
 
 constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_strings = {
     // ---- Help / usage ----------------------------------------------------
-    "lock 1.0.0 — AES-256-CTR + HMAC-SHA256 文件加密\n",
-    "将文件加密为带完整性认证的 .locked 容器。\n",
+    "ae-locker 1.0.0 — AES-256-CTR + HMAC-SHA256 文件加密\n",
+    "将文件加密为带完整性认证的 .ae-locked 容器。\n",
     "用法:\n"
-    "  lock <子命令> [选项] <文件> [<文件> ...]\n"
-    "  lock -c <子命令> [选项] <文件> [<文件> ...]\n"
-    "  lock --cli\n"
-    "  lock --help | --version\n",
-    "encrypt    加密一个或多个文件为 .locked 容器\n"
+    "  ae-locker <子命令> [选项] <文件> [<文件> ...]\n"
+    "  ae-locker -c <子命令> [选项] <文件> [<文件> ...]\n"
+    "  ae-locker --cli\n"
+    "  ae-locker --help | --version\n",
+    "encrypt    加密一个或多个文件为 .ae-locked 容器\n"
     "           (支持 --auto <dir> 递归目录批量模式)\n",
-    "decrypt    解密一个或多个 .locked 容器\n"
+    "decrypt    解密一个或多个 .ae-locked 容器\n"
     "           (支持 --auto <dir> 递归目录批量模式)\n",
-    "list       打印 .locked 容器的元数据(不解密)\n",
+    "list       打印 .ae-locked 容器的元数据(不解密)\n",
     "通用选项:\n",
     "仅 encrypt 的选项:\n",
     "仅 decrypt 的选项:\n",
@@ -317,39 +317,39 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "      --version                打印版本并退出\n",
     "  -h, --help                   打印帮助并退出\n",
     "# 加密单个文件(交互式输入口令)\n"
-    "  lock encrypt secret.txt\n",
+    "  ae-locker encrypt secret.txt\n",
     "# 解密并用 -o 把还原的文件放到 ./out/\n"
-    "  lock decrypt secret.txt.locked -o ./out/\n",
+    "  ae-locker decrypt secret.txt.ae-locked -o ./out/\n",
     "# 递归加密 ./secrets 下所有文件(子目录结构镜像到 ./encrypted)\n"
-    "  lock encrypt --auto ./secrets --max-depth 3 -o ./encrypted\n",
-    "# 查看一个 .locked 容器的元数据(不解密)\n"
-    "  lock list secret.txt.locked\n",
+    "  ae-locker encrypt --auto ./secrets --max-depth 3 -o ./encrypted\n",
+    "# 查看一个 .ae-locked 容器的元数据(不解密)\n"
+    "  ae-locker list secret.txt.ae-locked\n",
     "decrypt 也支持 --auto <dir> 与 --max-depth <N>(参见\"仅 encrypt 的选项\")。\n",
-    "运行 `lock <子命令> --help` 查看该子命令的详细帮助。\n",
-    "将一个或多个文件加密为带完整性认证的 .locked 容器。\n"
+    "运行 `ae-locker <子命令> --help` 查看该子命令的详细帮助。\n",
+    "将一个或多个文件加密为带完整性认证的 .ae-locked 容器。\n"
     "支持单个文件、文件列表,以及递归 --auto 批量模式。\n",
-    "解密一个或多个 .locked 容器,还原原始文件。\n"
+    "解密一个或多个 .ae-locked 容器,还原原始文件。\n"
     "支持单个文件、文件列表,以及递归 --auto 批量模式。\n",
-    "打印一个或多个 .locked 容器的元数据(不解密)。\n"
-    "对任何文件都安全运行;非 .locked 文件会被报告并跳过。\n",
+    "打印一个或多个 .ae-locked 容器的元数据(不解密)。\n"
+    "对任何文件都安全运行;非 .ae-locked 文件会被报告并跳过。\n",
     "# 加密单个文件\n"
-    "  lock encrypt secret.txt\n"
+    "  ae-locker encrypt secret.txt\n"
     "# 用 zstd (-z) 压缩后加密,口令从文件读取\n"
-    "  lock encrypt secret.txt -p pw.txt --no-safe -z -o ./out/\n"
+    "  ae-locker encrypt secret.txt -p pw.txt --no-safe -z -o ./out/\n"
     "# 递归批量加密(镜像源目录结构)\n"
-    "  lock encrypt --auto ./secrets --max-depth 3 -o ./encrypted\n",
+    "  ae-locker encrypt --auto ./secrets --max-depth 3 -o ./encrypted\n",
     "# 解密单个容器到 ./out/\n"
-    "  lock decrypt secret.txt.locked -o ./out/\n"
+    "  ae-locker decrypt secret.txt.ae-locked -o ./out/\n"
     "# 用口令文件解密\n"
-    "  lock decrypt secret.txt.locked -p pw.txt --no-safe -o ./out/\n"
+    "  ae-locker decrypt secret.txt.ae-locked -p pw.txt --no-safe -o ./out/\n"
     "# 递归批量解密(镜像源目录结构)\n"
-    "  lock decrypt --auto ./encrypted -o ./decrypted\n",
-    "# 查看一个或多个 .locked 容器的元数据(无需口令)\n"
-    "  lock list secret.txt.locked\n"
-    "# 查看目录下多个 .locked 文件\n"
-    "  lock list file1.locked file2.locked\n"
-    "# 对非 .locked 文件安全运行(报告并跳过)\n"
-    "  lock list plain.txt\n",
+    "  ae-locker decrypt --auto ./encrypted -o ./decrypted\n",
+    "# 查看一个或多个 .ae-locked 容器的元数据(无需口令)\n"
+    "  ae-locker list secret.txt.ae-locked\n"
+    "# 查看目录下多个 .ae-locked 文件\n"
+    "  ae-locker list file1.ae-locked file2.ae-locked\n"
+    "# 对非 .ae-locked 文件安全运行(报告并跳过)\n"
+    "  ae-locker list plain.txt\n",
 
     // ---- Common error / status labels ------------------------------------
     "错误: ",
@@ -378,7 +378,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "无法创建输出目录 '%s': %s",
     "扫描 --auto 目录 '%s' 失败",
     "在 '%s' 下未找到符合条件的文件",
-    "'%s' 不是 .locked 文件(magic 不匹配)",
+    "'%s' 不是 .ae-locked 文件(magic 不匹配)",
     "错误: ",
     "未知帮助主题 '%s'(取值: encrypt|decrypt|list)",
 
@@ -426,7 +426,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
 
     // ---- `list` command field labels --------------------------------------
     "文件: ",
-    "  (不是 .locked 文件)\n",
+    "  (不是 .ae-locked 文件)\n",
     "  magic:         ENCF0001v1\n",
     "  version:       ",
     "  algorithm:     AES-256-CTR + HMAC-SHA256 (0x",
@@ -449,8 +449,8 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "[memory] available=",
 
     // ---- Version + interactive REPL --------------------------------------
-    "lock 1.0.0",
-    "lock 交互模式\n",
+    "ae-locker 1.0.0",
+    "ae-locker 交互模式\n",
     "> ",
     "子命令:encrypt, decrypt, list, quit\n",
     "  未知命令 '",
@@ -470,7 +470,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     // ---- TUI ----
     "TUI 模式需要交互式终端 (tty)",
     "TUI 模式需要彩色支持 (不要使用 --no-color 或 NO_COLOR)",
-    "lock TUI 主菜单",
+    "ae-locker TUI 主菜单",
     "加密 (Encrypt)",
     "解密 (Decrypt)",
     "查看 (List)",
@@ -503,7 +503,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "按回车继续",
     "List —— TUI 模式不可用",
     "`list` 子命令输出到 stdout,与全屏 TUI 冲突。\n"
-    "请退出 TUI 后在 shell 中运行 `lock list <file>`。",
+    "请退出 TUI 后在 shell 中运行 `ae-locker list <file>`。",
 
     // ---- TUI (wizard) ----
     "步骤 ",
@@ -512,7 +512,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "压缩参数",
     "输出与并发",
     "密码",
-    "选择 .locked 文件",
+    "选择 .ae-locked 文件",
     "← 上一步",
     "下一步 →",
     "完成",
@@ -521,7 +521,7 @@ constexpr std::array<const char*, static_cast<size_t>(Str::Str_sentinel)> zh_str
     "当前路径",
     "已选",
     "无法读取此目录",
-    "选择要查看的 .locked 文件",
+    "选择要查看的 .ae-locked 文件",
     "查看",
     "操作完成。按回车返回主菜单",
 };
@@ -716,4 +716,4 @@ void force_color_on_for_tests() noexcept {
     g_color_state.store(1, std::memory_order_relaxed);
 }
 
-}  // namespace lock
+}  // namespace ae_locker

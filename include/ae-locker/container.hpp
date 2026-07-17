@@ -5,11 +5,11 @@
 #include <string_view>
 #include <vector>
 #include <fstream>
-#include <lock/constants.hpp>
+#include <ae-locker/constants.hpp>
 
-namespace lock {
+namespace ae_locker {
 
-// In-memory representation of the .locked file header.
+// In-memory representation of the .ae-locked file header.
 // Serialize with HeaderWriter; deserialize with HeaderReader.
 //
 // On-disk serialised layout (big-endian), offsets in bytes:
@@ -112,9 +112,9 @@ public:
     //   - any field is malformed
     static FileHeader read(std::ifstream& in);
 
-    // Quick magic-check without parsing the rest. Used for `lock decrypt`
+    // Quick magic-check without parsing the rest. Used for `ae-locker decrypt`
     // pre-validation. Does not throw on version mismatch.
     [[nodiscard]] static bool is_locked_file(const std::string& path);
 };
 
-}  // namespace lock
+}  // namespace ae_locker

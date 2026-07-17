@@ -1,4 +1,4 @@
-#include <lock/compress.hpp>
+#include <ae-locker/compress.hpp>
 
 #include <memory>
 #include <stdexcept>
@@ -7,7 +7,7 @@
 #include <lz4.h>
 #include <zstd.h>
 
-namespace lock {
+namespace ae_locker {
 
 namespace {
 
@@ -187,4 +187,4 @@ std::vector<unsigned char> decompress_chunk(
     throw std::runtime_error("decompress_chunk: unknown CompressionId");
 }
 
-}  // namespace lock
+}  // namespace ae_locker

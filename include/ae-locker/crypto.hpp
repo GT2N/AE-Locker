@@ -7,11 +7,11 @@
 #include <vector>
 #include <cstddef>
 #include <span>
-#include <lock/constants.hpp>
-#include <lock/kdf.hpp>
-#include <lock/container.hpp>
+#include <ae-locker/constants.hpp>
+#include <ae-locker/kdf.hpp>
+#include <ae-locker/container.hpp>
 
-namespace lock {
+namespace ae_locker {
 
 // Progress callback: (bytes_processed_so_far, total_bytes).
 // Called from *worker threads*; the subscriber MUST be thread-safe
@@ -277,4 +277,4 @@ void decrypt_file(const std::string& input_path,
                   const std::string& output_path,
                   const DecryptOptions& opts);
 
-}  // namespace lock
+}  // namespace ae_locker

@@ -26,7 +26,7 @@
     {
       "name": "aarch64-static",
       "displayName": "Cross arm64 (aarch64-linux-gnu) — fully static link",
-      "description": "Cross-compile `lock` for aarch64 Linux with clang --target=aarch64-linux-gnu, LLD, ThinLTO; OpenSSL / readline / glibc / libstdc++ / libgcc / lz4 / zstd / ftxui all linked as .a. Binary has no NEEDED entries.",
+      "description": "Cross-compile `ae-locker` for aarch64 Linux with clang --target=aarch64-linux-gnu, LLD, ThinLTO; OpenSSL / readline / glibc / libstdc++ / libgcc / lz4 / zstd / ftxui all linked as .a. Binary has no NEEDED entries.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-aarch64",
       "toolchainFile": "${sourceDir}/cmake/aarch64-linux-gnu.cmake",

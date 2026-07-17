@@ -1,5 +1,5 @@
-#include <lock/cli.hpp>
-#include <lock/errors.hpp>
+#include <ae-locker/cli.hpp>
+#include <ae-locker/errors.hpp>
 
 #include <exception>
 #include <iostream>
@@ -14,7 +14,7 @@
 //      at least 64 for ARM64 Bionic"
 //
 // 我们在 x86_64 主机上用 Debian multiarch 的 arm64 glibc 静态库交叉编译
-// `lock` 时, glibc 静态库里的 thread_local 变量默认 alignment 是 8 字节,
+// `ae-locker` 时, glibc 静态库里的 thread_local 变量默认 alignment 是 8 字节,
 // 导致 LLD 把 PT_TLS 段的 alignment 合并为 8。LLD 19 没有提供
 // `--tls-align` 之类的开关直接强制抬高对齐, 所以我们从源码侧注入
 // 一个 alignas(64) thread_local 哑变量: 只要把这一个 TLS symbol 的对齐
@@ -40,12 +40,12 @@ char tls_align_pad_64_[64] = {};
 
 int main(int argc, char** argv) {
     try {
-        return lock::cli_main(argc, argv);
+        return ae_locker::cli_main(argc, argv);
     } catch (const std::exception& e) {
-        std::cerr << "lock: uncaught exception: " << e.what() << "\n";
-        return static_cast<int>(lock::ExitCode::Internal);
+        std::cerr << "ae-locker: uncaught exception: " << e.what() << "\n";
+        return static_cast<int>(ae_locker::ExitCode::Internal);
     } catch (...) {
-        std::cerr << "lock: unknown exception\n";
-        return static_cast<int>(lock::ExitCode::Internal);
+        std::cerr << "ae-locker: unknown exception\n";
+        return static_cast<int>(ae_locker::ExitCode::Internal);
     }
 }

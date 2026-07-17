@@ -33,8 +33,8 @@
 //     per-slot state update repaints the whole block atomically), and lets
 //     us color-grade the layout to fit on an 80-column terminal.
 
-#include <lock/progress.hpp>
-#include <lock/i18n.hpp>
+#include <ae-locker/progress.hpp>
+#include <ae-locker/i18n.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -47,7 +47,7 @@
 #include <unistd.h>
 #include <vector>
 
-namespace lock {
+namespace ae_locker {
 
 namespace {
 
@@ -145,7 +145,7 @@ ProgressTracker::ProgressTracker(ProgressTracker&&) noexcept = default;
 ProgressTracker& ProgressTracker::operator=(ProgressTracker&&) noexcept = default;
 
 void ProgressTracker::start(size_t total_files) {
-    std::lock_guard<std::mutex> lock(pimpl_->mutex_);
+    std::lock_guard<std::mutex> lk(pimpl_->mutex_);
     pimpl_->total_files = total_files;
     pimpl_->files_done.store(0, std::memory_order_relaxed);
     pimpl_->total_chunks_done.store(0, std::memory_order_relaxed);
@@ -182,7 +182,7 @@ void ProgressTracker::start(size_t total_files) {
 void ProgressTracker::start_file(size_t file_idx,
                                   std::string_view filename,
                                   size_t total_chunks) {
-    std::lock_guard<std::mutex> lock(pimpl_->mutex_);
+    std::lock_guard<std::mutex> lk(pimpl_->mutex_);
     const size_t slot = file_idx + 1;
     if (slot < pimpl_->total_chunks_per_file.size()) {
         pimpl_->total_chunks_per_file[slot] = total_chunks;
@@ -252,7 +252,7 @@ void ProgressTracker::finish_file(size_t file_idx) {
     pimpl_->files_done.fetch_add(1, std::memory_order_relaxed);
 
     {
-        std::lock_guard<std::mutex> lock(pimpl_->mutex_);
+        std::lock_guard<std::mutex> lk(pimpl_->mutex_);
         pimpl_->file_finished[file_idx] = true;
     }
     render_all();
@@ -277,7 +277,7 @@ void ProgressTracker::finish() {
         std::memory_order_relaxed);
 
     {
-        std::lock_guard<std::mutex> lock(pimpl_->mutex_);
+        std::lock_guard<std::mutex> lk(pimpl_->mutex_);
         for (size_t i = 0; i < pimpl_->total_files; ++i) {
             pimpl_->file_finished[i] = true;
         }
@@ -322,7 +322,7 @@ ProgressTracker::make_callback(size_t file_idx, size_t chunk_size) {
 // start_file()). External callers go through render_all().
 void ProgressTracker::render_all() {
     if (!pimpl_->started || pimpl_->finished) return;
-    std::lock_guard<std::mutex> lock(pimpl_->mutex_);
+    std::lock_guard<std::mutex> lk(pimpl_->mutex_);
     render_all_locked();
 }
 
@@ -414,4 +414,4 @@ void ProgressTracker::render_all_locked() {
     std::fflush(stderr);
 }
 
-}  // namespace lock
+}  // namespace ae_locker

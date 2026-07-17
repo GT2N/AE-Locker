@@ -1,7 +1,7 @@
-#include <lock/safe.hpp>
-#include <lock/errors.hpp>
-#include <lock/i18n.hpp>
-#include <lock/term.hpp>
+#include <ae-locker/safe.hpp>
+#include <ae-locker/errors.hpp>
+#include <ae-locker/i18n.hpp>
+#include <ae-locker/term.hpp>
 
 #include <cstdlib>
 #include <fstream>
@@ -11,7 +11,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-namespace lock {
+namespace ae_locker {
 
 namespace {
 
@@ -177,4 +177,4 @@ PasswordResult acquire_password(const PasswordRequest& req) {
     throw LockError(ExitCode::Internal, tr(Str::Err_pw_invalid_mode));
 }
 
-}  // namespace lock
+}  // namespace ae_locker

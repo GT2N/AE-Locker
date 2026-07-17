@@ -5,14 +5,14 @@ if(NOT CMAKE_GENERATOR)
     set(CMAKE_GENERATOR Ninja CACHE STRING "Build generator" FORCE)
 endif()
 
-project(lock LANGUAGES C CXX VERSION 1.0.0)
+project(ae-locker LANGUAGES C CXX VERSION 1.0.0)
 
 # -----------------------------------------------------------------------------
 # Compiler guard: require Clang.
 # -----------------------------------------------------------------------------
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     message(FATAL_ERROR
-        "The 'lock' project requires the Clang C/C++ compiler.\n"
+        "The 'ae-locker' project requires the Clang C/C++ compiler.\n"
         "Detected CMAKE_CXX_COMPILER_ID='${CMAKE_CXX_COMPILER_ID}'.\n"
         "Install Clang on Debian/Ubuntu with:\n"
         "    sudo apt-get install clang lld\n"
@@ -64,8 +64,8 @@ find_package(OpenSSL REQUIRED)
 # GNU readline (optional).
 #
 # Probe for libreadline and its dev headers. When both are available we set
-# CACHE var `LOCK_HAVE_READLINE=ON` so downstream `target_compile_definitions`
-# can advertise `LOCK_HAVE_READLINE=1` to translation units; otherwise the
+# CACHE var `AE_LOCKER_HAVE_READLINE=ON` so downstream `target_compile_definitions`
+# can advertise `AE_LOCKER_HAVE_READLINE=1` to translation units; otherwise the
 # cache var stays OFF and cli.cpp falls back to `std::getline` (no history,
 # no Tab completion). The dependency is strictly soft — `cmake --preset
 # default` succeeds either way.
@@ -83,14 +83,14 @@ find_package_handle_standard_args(Readline
 # the transitive dependency under -flto=thin.
 find_library(Readline_TINFO_LIBRARY NAMES tinfo ncurses)
 if(Readline_FOUND)
-    set(LOCK_HAVE_READLINE ON CACHE BOOL "GNU readline available" FORCE)
+    set(AE_LOCKER_HAVE_READLINE ON CACHE BOOL "GNU readline available" FORCE)
 else()
-    set(LOCK_HAVE_READLINE OFF CACHE BOOL "GNU readline available" FORCE)
+    set(AE_LOCKER_HAVE_READLINE OFF CACHE BOOL "GNU readline available" FORCE)
 endif()
-message(STATUS "lock: readline library -- ${Readline_LIBRARY}")
-message(STATUS "lock: readline include -- ${Readline_INCLUDE_DIR}")
-message(STATUS "lock: readline tinfo  -- ${Readline_TINFO_LIBRARY}")
-message(STATUS "lock: GNU readline detected (LOCK_HAVE_READLINE=${LOCK_HAVE_READLINE})")
+message(STATUS "ae-locker: readline library -- ${Readline_LIBRARY}")
+message(STATUS "ae-locker: readline include -- ${Readline_INCLUDE_DIR}")
+message(STATUS "ae-locker: readline tinfo  -- ${Readline_TINFO_LIBRARY}")
+message(STATUS "ae-locker: GNU readline detected (AE_LOCKER_HAVE_READLINE=${AE_LOCKER_HAVE_READLINE})")
 
 # -----------------------------------------------------------------------------
 # Force the LLD linker.
@@ -203,9 +203,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # -----------------------------------------------------------------------------
 # Status messages.
 # -----------------------------------------------------------------------------
-message(STATUS "lock: LLD linker path -- ${LLD_PATH}")
-message(STATUS "lock: ThinLTO enabled -- ${ENABLE_THINLTO}")
-message(STATUS "lock: OpenSSL version -- ${OPENSSL_VERSION}")
+message(STATUS "ae-locker: LLD linker path -- ${LLD_PATH}")
+message(STATUS "ae-locker: ThinLTO enabled -- ${ENABLE_THINLTO}")
+message(STATUS "ae-locker: OpenSSL version -- ${OPENSSL_VERSION}")
 
 # -----------------------------------------------------------------------------
 # Executable target.
@@ -214,7 +214,7 @@ message(STATUS "lock: OpenSSL version -- ${OPENSSL_VERSION}")
 # working even when the sources are not yet present, we only declare the
 # executable when src/main.cpp exists.
 # -----------------------------------------------------------------------------
-set(LOCK_SOURCES
+set(AE_LOCKER_SOURCES
     src/main.cpp
     src/cli.cpp
     src/completion.cpp
@@ -232,9 +232,9 @@ set(LOCK_SOURCES
 )
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
-    add_executable(lock ${LOCK_SOURCES})
+    add_executable(ae-locker ${AE_LOCKER_SOURCES})
 
-    target_link_libraries(lock PRIVATE
+    target_link_libraries(ae-locker PRIVATE
         Threads::Threads
         OpenSSL::Crypto
         OpenSSL::SSL
@@ -243,7 +243,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
         ftxui::component
     )
 
-    target_compile_features(lock PRIVATE cxx_std_20)
+    target_compile_features(ae-locker PRIVATE cxx_std_20)
 
     # ftxui is a third-party library whose code produces numerous warnings under
     # our strict -Werror -Wconversion -Wsign-conversion flags.  Mark its
@@ -252,17 +252,17 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
     # their headers still trip -Wconversion when consumed as C++; we treat them
     # the same way.  We do not link `ftxui::component`'s PUBLIC includes
     # (the target's include dir is PRIVATE, so we mirror it as SYSTEM here).
-    target_include_directories(lock SYSTEM PRIVATE
+    target_include_directories(ae-locker SYSTEM PRIVATE
         ${lz4_SOURCE_DIR}/lib             # for lz4.h (lz4 path is ../lib)
         ${zstd_SOURCE_DIR}/lib            # for zstd.h
         ${ftxui_SOURCE_DIR}/include       # ftxui public headers
     )
 
-    target_include_directories(lock PRIVATE
+    target_include_directories(ae-locker PRIVATE
         ${CMAKE_SOURCE_DIR}/include
     )
 
-    target_compile_options(lock PRIVATE
+    target_compile_options(ae-locker PRIVATE
         -Wall
         -Wextra
         -Wpedantic
@@ -272,27 +272,27 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
     )
 
     # -------------------------------------------------------------------------
-    # GNU readline linkage (conditional on LOCK_HAVE_READLINE).
+    # GNU readline linkage (conditional on AE_LOCKER_HAVE_READLINE).
     #
-    # When readline is present, advertise `LOCK_HAVE_READLINE=1` to every TU so
-    # cli.cpp's `#if LOCK_HAVE_READLINE` branch compiles in the readline-based
+    # When readline is present, advertise `AE_LOCKER_HAVE_READLINE=1` to every TU so
+    # cli.cpp's `#if AE_LOCKER_HAVE_READLINE` branch compiles in the readline-based
     # REPL; otherwise advertise `=0` and leave cli.cpp with std::getline.
     # -------------------------------------------------------------------------
-    if(LOCK_HAVE_READLINE)
-        target_compile_definitions(lock PRIVATE LOCK_HAVE_READLINE=1)
-        target_link_libraries(lock PRIVATE ${Readline_LIBRARY})
+    if(AE_LOCKER_HAVE_READLINE)
+        target_compile_definitions(ae-locker PRIVATE AE_LOCKER_HAVE_READLINE=1)
+        target_link_libraries(ae-locker PRIVATE ${Readline_LIBRARY})
         if(Readline_TINFO_LIBRARY)
-            target_link_libraries(lock PRIVATE ${Readline_TINFO_LIBRARY})
+            target_link_libraries(ae-locker PRIVATE ${Readline_TINFO_LIBRARY})
         endif()
     else()
-        target_compile_definitions(lock PRIVATE LOCK_HAVE_READLINE=0)
+        target_compile_definitions(ae-locker PRIVATE AE_LOCKER_HAVE_READLINE=0)
     endif()
 
-    install(TARGETS lock RUNTIME DESTINATION bin)
+    install(TARGETS ae-locker RUNTIME DESTINATION bin)
 
     # -------------------------------------------------------------------------
     # Shell tab-completion scripts.  Generated at install time by invoking the
-    # freshly-built `lock` binary (`lock --completion <shell>`) — the source
+    # freshly-built `ae-locker` binary (`ae-locker --completion <shell>`) — the source
     # tree therefore stays free of generated artefacts and the installed
     # scripts never drift from the binary's actual flag set.  Destinations
     # follow each shell's vendor convention so a default `DESTDIR`+`make
@@ -300,33 +300,33 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/main.cpp")
     # -------------------------------------------------------------------------
     include(GNUInstallDirs)
     install(CODE "
-        set(LOCK_BIN \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_BINDIR}/lock\")
-        if(NOT EXISTS \"\${LOCK_BIN}\")
-            message(FATAL_ERROR \"lock binary not found at install time: \${LOCK_BIN}\")
+        set(AE_LOCKER_BIN \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_BINDIR}/ae-locker\")
+        if(NOT EXISTS \"\${AE_LOCKER_BIN}\")
+            message(FATAL_ERROR \"ae-locker binary not found at install time: \${AE_LOCKER_BIN}\")
         endif()
         file(MAKE_DIRECTORY \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/bash-completion/completions\")
         file(MAKE_DIRECTORY \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/zsh/site-functions\")
         file(MAKE_DIRECTORY \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/fish/vendor_completions.d\")
         execute_process(
-            COMMAND \"\${LOCK_BIN}\" --completion bash
-            OUTPUT_FILE \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/bash-completion/completions/lock\"
+            COMMAND \"\${AE_LOCKER_BIN}\" --completion bash
+            OUTPUT_FILE \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/bash-completion/completions/ae-locker\"
             RESULT_VARIABLE _rc_bash)
         execute_process(
-            COMMAND \"\${LOCK_BIN}\" --completion zsh
-            OUTPUT_FILE \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/zsh/site-functions/_lock\"
+            COMMAND \"\${AE_LOCKER_BIN}\" --completion zsh
+            OUTPUT_FILE \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/zsh/site-functions/_ae-locker\"
             RESULT_VARIABLE _rc_zsh)
         execute_process(
-            COMMAND \"\${LOCK_BIN}\" --completion fish
-            OUTPUT_FILE \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/fish/vendor_completions.d/lock.fish\"
+            COMMAND \"\${AE_LOCKER_BIN}\" --completion fish
+            OUTPUT_FILE \"\${DESTDIR}\${CMAKE_INSTALL_PREFIX}/\${CMAKE_INSTALL_DATADIR}/fish/vendor_completions.d/ae-locker.fish\"
             RESULT_VARIABLE _rc_fish)
         foreach(_rc \"_rc_bash\" \"_rc_zsh\" \"_rc_fish\")
             if(NOT \${_rc} EQUAL 0)
-                message(FATAL_ERROR \"lock --completion install step failed (rc=\${\${_rc}})\")
+                message(FATAL_ERROR \"ae-locker --completion install step failed (rc=\${\${_rc}})\")
             endif()
         endforeach()
-        message(STATUS \"lock: installed bash/zsh/fish tab-completion scripts under \${CMAKE_INSTALL_DATADIR}\")
+        message(STATUS \"ae-locker: installed bash/zsh/fish tab-completion scripts under \${CMAKE_INSTALL_DATADIR}\")
     ")
 else()
-    message(STATUS "lock: src/main.cpp not found yet -- skipping target 'lock'. "
+    message(STATUS "ae-locker: src/main.cpp not found yet -- skipping target 'ae-locker'. "
                    "Add sources to enable the build target.")
 endif()

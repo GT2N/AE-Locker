@@ -1,6 +1,6 @@
-#include <lock/crypto.hpp>
-#include <lock/endian.hpp>
-#include <lock/compress.hpp>
+#include <ae-locker/crypto.hpp>
+#include <ae-locker/endian.hpp>
+#include <ae-locker/compress.hpp>
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -30,7 +30,7 @@
 #include <utility>
 #include <unistd.h>
 
-namespace lock {
+namespace ae_locker {
 
 namespace {
 
@@ -1736,4 +1736,4 @@ void decrypt_file(const std::string& input_path,
     }
 }
 
-}  // namespace lock
+}  // namespace ae_locker

@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# lock: aarch64-linux-gnu 交叉编译 toolchain file
+# ae-locker: aarch64-linux-gnu 交叉编译 toolchain file
 #
-# 在 x86_64 主机上使用 clang 的 cross-target 能力为 aarch64 Linux 交叉编译 `lock`，
+# 在 x86_64 主机上使用 clang 的 cross-target 能力为 aarch64 Linux 交叉编译 `ae-locker`，
 # 并尽量静态链接（glibc / libstdc++ / libgcc / OpenSSL / readline / tinfo / zlib
 # 全部使用 .a），产出可在任意 aarch64 Linux（glibc 版本不低于构建机）上直接
 # 运行的 single-binary。
@@ -131,9 +131,9 @@ set(Readline_TINFO_LIBRARY "/usr/lib/aarch64-linux-gnu/libtinfo.a"
 # ─────────────────────────────────────────────────────────────────────────────
 # 关键：让 CMake 的 try_compile / try_link 不去 link 成 ELF，而是组装成
 # STATIC_LIBRARY。cross-toolchain + -static 时 link 一个独立的 .c 探针会
-# 失败（pthread.h 必须从 libc.a 链入，但 try_compile 输入的 .c 不是 lock 本身的
+# 失败（pthread.h 必须从 libc.a 链入，但 try_compile 输入的 .c 不是 ae-locker 本身的
 # sources，多半链不到真实所有符号）。把探针改成 STATIC_LIBRARY 后不执行 link，
 # 只验证 compiler + 汇编 OK，彻底绕开 cross-static try-link 死锁。这个开关
-# 不影响 lock 本身的最终 link —— lock 的 add_executable 仍然会完整链接。
+# 不影响 ae-locker 本身的最终 link —— ae-locker 的 add_executable 仍然会完整链接。
 # ─────────────────────────────────────────────────────────────────────────────
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)

@@ -6,7 +6,7 @@
 #include <vector>
 #include <functional>
 
-namespace lock {
+namespace ae_locker {
 
 // RAII multi-file progress tracker.
 // Shows one overall bar + N per-file bars (where N = file count).
@@ -45,7 +45,7 @@ public:
     // thread after all files have been processed (i.e., all threads joined).
     void finish();
 
-    // Returns a per-file progress callback suitable for passing to `lock::encrypt_file` / `decrypt_file`.
+    // Returns a per-file progress callback suitable for passing to `ae_locker::encrypt_file` / `decrypt_file`.
     // The returned callback updates bar[file_idx]'s postfix and progress.
     // Signature of callback: (size_t bytes_done, size_t bytes_total).
     // The callback uses an internal chunk counter that increments per file's bytes-processed
@@ -62,4 +62,4 @@ private:
     void render_all_locked();
 };
 
-}  // namespace lock
+}  // namespace ae_locker

@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace lock {
+namespace ae_locker {
 
 // File format magic: "ENCF0001v1\0\0\0\0\0\0" (16 bytes, AES-block-aligned)
 inline constexpr std::array<unsigned char, 16> MAGIC = {
@@ -26,7 +26,7 @@ enum class KdfId : uint32_t {
     HKDF_SHA256 = 0x03,
 };
 
-// Compression identifiers for the v2 .locked file format (stored as
+// Compression identifiers for the v2 .ae-locked file format (stored as
 // big-endian uint32 at header offset 112). v1 files have no such field and
 // are normalised to NONE on read; stored_size is then set to original_size.
 enum class CompressionId : uint32_t {
@@ -56,10 +56,10 @@ inline constexpr uint64_t SCRYPT_DEFAULT_MAXMEM = 64 * 1024 * 1024;  // 64 MiB
 inline constexpr uint64_t DEFAULT_CHUNK_SIZE = 1 * 1024 * 1024;
 
 // Default file extension for encrypted output
-inline constexpr const char* LOCKED_EXTENSION = ".locked";
+inline constexpr const char* LOCKED_EXTENSION = ".ae-locked";
 
 // Output buffer sizes
 inline constexpr size_t HEADER_FIXED_SIZE = 124;   // see container format spec (v2: added compression_id@112 + stored_size@116;8-byte stored_size runs 116..123, filename starts at 124)
 inline constexpr size_t FOOTER_SIZE      = HMAC_SHA256_SIZE;  // 32 bytes
 
-}  // namespace lock
+}  // namespace ae_locker

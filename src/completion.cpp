@@ -1,12 +1,12 @@
-// lock::completion — runtime shell-completion-script generator.  See
-// include/lock/completion.hpp for the public surface.
-#include <lock/completion.hpp>
+// ae_locker::completion — runtime shell-completion-script generator.  See
+// include/ae-locker/completion.hpp for the public surface.
+#include <ae-locker/completion.hpp>
 
 #include <ostream>
 #include <string>
 #include <string_view>
 
-namespace lock {
+namespace ae_locker {
 
 namespace {
 
@@ -22,19 +22,20 @@ namespace {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Bash — defines `_lock()` and registers the completion function for both
-// `lock` and its three subcommand synonyms (so `lock encrypt -<TAB>` works
-// even if the user invokes the binary under a different `lock-<cmd>` name).
-// `complete -o default -F _lock ...` keeps bash's default file/dir listing
-// for positional args AND for "file"/"dir"-typed flag values.
+// Bash — defines `_ae_locker()` and registers the completion function for both
+// `ae-locker` and its three subcommand synonyms (so `ae-locker encrypt -<TAB>`
+// works even if the user invokes the binary under a different
+// `ae-locker-<cmd>` name).
+// `complete -o default -F _ae_locker ...` keeps bash's default file/dir
+// listing for positional args AND for "file"/"dir"-typed flag values.
 // ---------------------------------------------------------------------------
 void emit_bash(std::ostream& out) {
     out <<
-        "# lock --completion bash  (generated at runtime by `lock` itself)\n"
-        "# Usage: eval \"$(lock --completion bash)\"\n"
-        "# Or install to ${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/lock\n"
+        "# ae-locker --completion bash  (generated at runtime by `ae-locker` itself)\n"
+        "# Usage: eval \"$(ae-locker --completion bash)\"\n"
+        "# Or install to ${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/ae-locker\n"
         "\n"
-        "_lock() {\n"
+        "_ae_locker() {\n"
         "    local cur prev words cword\n"
         "    _init_completion 2>/dev/null || {\n"
         "        cur=\"${COMP_WORDS[COMP_CWORD]}\"\n"
@@ -43,7 +44,7 @@ void emit_bash(std::ostream& out) {
         "        cword=$COMP_CWORD\n"
         "    }\n"
         "\n"
-        "    # Subcommand detection: first non-flag arg after `lock` itself.\n"
+        "    # Subcommand detection: first non-flag arg after `ae-locker` itself.\n"
         "    local sub=\"\"\n"
         "    local i\n"
         "    for ((i=1; i<${#words[@]}; i++)); do\n"
@@ -132,28 +133,29 @@ void emit_bash(std::ostream& out) {
         "    return 0\n"
         "}\n"
         "\n"
-        "# Register against `lock` and the three subcommand synonyms so that\n"
-        "# both `lock encrypt -<TAB>` and `encrypt -<TAB>` (in PATH/alias flows)\n"
-        "# route through the same `_lock` completion function.\n"
-        "complete -o default -o filenames -F _lock lock encrypt decrypt list\n"
+        "# Register against `ae-locker` and the three subcommand synonyms so that\n"
+        "# both `ae-locker encrypt -<TAB>` and `encrypt -<TAB>` (in PATH/alias\n"
+        "# flows) route through the same `_ae_locker` completion function.\n"
+        "complete -o default -o filenames -F _ae_locker ae-locker encrypt decrypt list\n"
         "\n"
-        "# End of `lock --completion bash`\n";
+        "# End of `ae-locker --completion bash`\n";
 }
 
 // ---------------------------------------------------------------------------
-// Zsh — `#compdef lock` + `_arguments` per subcommand route.  After
-// `autoload compinit && compinit`, `eval "$(lock --completion zsh)"` makes
-// `lock`, `lock encrypt`, `lock decrypt`, `lock list` all complete the same
-// surface as bash.  Uses `_pick_variant` to switch on the subcommand.
+// Zsh — `#compdef ae-locker` + `_arguments` per subcommand route.  After
+// `autoload compinit && compinit`, `eval "$(ae-locker --completion zsh)"` makes
+// `ae-locker`, `ae-locker encrypt`, `ae-locker decrypt`, `ae-locker list` all
+// complete the same surface as bash.  Uses `_pick_variant` to switch on the
+// subcommand.
 // ---------------------------------------------------------------------------
 void emit_zsh(std::ostream& out) {
     out <<
-        "#compdef lock\n"
-        "# lock --completion zsh  (generated at runtime by `lock` itself)\n"
-        "# Usage: eval \"$(lock --completion zsh)\"\n"
-        "# Or copy to a directory on $fpath as `_lock`.\n"
+        "#compdef ae-locker\n"
+        "# ae-locker --completion zsh  (generated at runtime by `ae-locker` itself)\n"
+        "# Usage: eval \"$(ae-locker --completion zsh)\"\n"
+        "# Or copy to a directory on $fpath as `_ae-locker`.\n"
         "\n"
-        "_lock() {\n"
+        "_ae_locker() {\n"
         "    local -a common_args\n"
         "    common_args=(\n"
         "        '-p+[password file]:file:_files'\n"
@@ -203,69 +205,69 @@ void emit_zsh(std::ostream& out) {
         "    esac\n"
         "}\n"
         "\n"
-        "_lock \"$@\"\n"
+        "_ae_locker \"$@\"\n"
         "\n"
-        "# End of `lock --completion zsh`\n";
+        "# End of `ae-locker --completion zsh`\n";
 }
 
 // ---------------------------------------------------------------------------
-// Fish — `complete -c lock ...` statements.  fish's model is declarative;
-// we register one `complete -c lock -a ...` line per flag, with `-r` for
-// value-taking flags and `-f` to suppress file completion only inside the
-// flag-name position.  `-n` guards restrict each rule to the active
-// subcommand line.
+// Fish — `complete -c ae-locker ...` statements.  fish's model is
+// declarative; we register one `complete -c ae-locker -a ...` line per flag,
+// with `-r` for value-taking flags and `-f` to suppress file completion only
+// inside the flag-name position.  `-n` guards restrict each rule to the
+// active subcommand line.
 // ---------------------------------------------------------------------------
 void emit_fish(std::ostream& out) {
     out <<
-        "# lock --completion fish  (generated at runtime by `lock` itself)\n"
-        "# Usage: lock --completion fish | source\n"
+        "# ae-locker --completion fish  (generated at runtime by `ae-locker` itself)\n"
+        "# Usage: ae-locker --completion fish | source\n"
         "\n"
-        "# Subcommand list as the first positional after `lock`.\n"
-        "complete -c lock -n '__fish_use_subcommand' -a 'encrypt' -d 'Encrypt files'\n"
-        "complete -c lock -n '__fish_use_subcommand' -a 'decrypt' -d 'Decrypt files'\n"
-        "complete -c lock -n '__fish_use_subcommand' -a 'list'    -d 'Print metadata'\n"
+        "# Subcommand list as the first positional after `ae-locker`.\n"
+        "complete -c ae-locker -n '__fish_use_subcommand' -a 'encrypt' -d 'Encrypt files'\n"
+        "complete -c ae-locker -n '__fish_use_subcommand' -a 'decrypt' -d 'Decrypt files'\n"
+        "complete -c ae-locker -n '__fish_use_subcommand' -a 'list'    -d 'Print metadata'\n"
         "\n"
         "# ---- Common flags (every subcommand) ----\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-s p -l password-file -r -F\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-l password-env-var\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-l no-safe\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-s j -l jobs -r\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-s o -l output-dir -r\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-l chunk-size -r\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-s v -l verbose\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-s q -l quiet\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-l lang -r -f -a 'en zh'\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-l no-color\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-l version\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt decrypt list' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt decrypt list' "
         "-s h -l help\n"
         "\n"
         "# ---- Encrypt-only ----\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt' "
         "-l compress -r -f -a 'none lz4 zstd'\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt' "
         "-s z\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt' "
         "-l fast\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt' "
         "-l level -r\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt' "
         "-l auto -r\n"
-        "complete -c lock -n '__fish_seen_subcommand_from encrypt' "
+        "complete -c ae-locker -n '__fish_seen_subcommand_from encrypt' "
         "-l max-depth -r\n"
         "\n"
-        "# End of `lock --completion fish`\n";
+        "# End of `ae-locker --completion fish`\n";
 }
 
 }  // namespace (anonymous)
@@ -307,4 +309,4 @@ bool print_completion_for(std::string_view shell_name, std::ostream& out) {
     return true;
 }
 
-}  // namespace lock
+}  // namespace ae_locker

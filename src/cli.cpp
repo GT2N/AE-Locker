@@ -1,22 +1,22 @@
-// lock::cli — argv parsing, subcommand dispatch, and file-orchestration glue
+// ae_locker::cli — argv parsing, subcommand dispatch, and file-orchestration glue
 // between the password acquirer, the KDF, the crypto core, and the progress
 // tracker. main() (in main.cpp) delegates everything to cli_main().
-#include <lock/cli.hpp>
+#include <ae-locker/cli.hpp>
 
-#include <lock/cli_dispatch.hpp>
-#include <lock/completion.hpp>
-#include <lock/compress.hpp>
-#include <lock/constants.hpp>
-#include <lock/container.hpp>
-#include <lock/crypto.hpp>
-#include <lock/errors.hpp>
-#include <lock/i18n.hpp>
-#include <lock/kdf.hpp>
-#include <lock/memory.hpp>
-#include <lock/progress.hpp>
-#include <lock/repl.hpp>
-#include <lock/safe.hpp>
-#include <lock/tui.hpp>
+#include <ae-locker/cli_dispatch.hpp>
+#include <ae-locker/completion.hpp>
+#include <ae-locker/compress.hpp>
+#include <ae-locker/constants.hpp>
+#include <ae-locker/container.hpp>
+#include <ae-locker/crypto.hpp>
+#include <ae-locker/errors.hpp>
+#include <ae-locker/i18n.hpp>
+#include <ae-locker/kdf.hpp>
+#include <ae-locker/memory.hpp>
+#include <ae-locker/progress.hpp>
+#include <ae-locker/repl.hpp>
+#include <ae-locker/safe.hpp>
+#include <ae-locker/tui.hpp>
 
 #include <algorithm>
 #include <array>
@@ -39,7 +39,7 @@
 #include <utility>
 #include <vector>
 
-namespace lock {
+namespace ae_locker {
 
 namespace {
 
@@ -372,7 +372,7 @@ void print_subcommand_help(SubCmd cmd) {
                       << tr(Str::Help_subcmd_encrypt_intro)
                       << "\n"
                       << tr(Str::Help_usage_cmd)
-                      << "\n  lock encrypt [options] <file> [<file> ...]\n\n"
+                      << "\n  ae-locker encrypt [options] <file> [<file> ...]\n\n"
                       << tr(Str::Help_grp_common)
                       << tr(Str::Help_opt_password_file)
                       << tr(Str::Help_opt_password_env)
@@ -403,7 +403,7 @@ void print_subcommand_help(SubCmd cmd) {
                       << tr(Str::Help_subcmd_decrypt_intro)
                       << "\n"
                       << tr(Str::Help_usage_cmd)
-                      << "\n  lock decrypt [options] <file> [<file> ...]\n\n"
+                      << "\n  ae-locker decrypt [options] <file> [<file> ...]\n\n"
                       << tr(Str::Help_grp_common)
                       << tr(Str::Help_opt_password_file)
                       << tr(Str::Help_opt_password_env)
@@ -428,7 +428,7 @@ void print_subcommand_help(SubCmd cmd) {
                       << tr(Str::Help_subcmd_list_intro)
                       << "\n"
                       << tr(Str::Help_usage_cmd)
-                      << "\n  lock list [options] <file> [<file> ...]\n\n"
+                      << "\n  ae-locker list [options] <file> [<file> ...]\n\n"
                       << tr(Str::Help_grp_common)
                       << tr(Str::Help_opt_verbose)
                       << tr(Str::Help_opt_quiet)
@@ -514,8 +514,8 @@ int collect_encrypt_inputs(const std::string& auto_dir_in,
             }
             if (de.is_regular_file(st_ec)) {
                 std::string name = p.filename().string();
-                if (name.size() >= 7u &&
-                    name.compare(name.size() - 7u, 7u, LOCKED_EXTENSION) == 0) {
+                if (name.size() >= 10u &&
+                    name.compare(name.size() - 10u, 10u, LOCKED_EXTENSION) == 0) {
                     continue;
                 }
                 std::string rel = rel_path_under(root, p);
@@ -575,8 +575,8 @@ int collect_decrypt_inputs(const std::string& auto_dir_in,
             }
             if (de.is_regular_file(st_ec)) {
                 std::string name = p.filename().string();
-                if (name.size() < 7u ||
-                    name.compare(name.size() - 7u, 7u, LOCKED_EXTENSION) != 0) {
+                if (name.size() < 10u ||
+                    name.compare(name.size() - 10u, 10u, LOCKED_EXTENSION) != 0) {
                     continue;
                 }
                 std::string rel = rel_path_under(root, p);
@@ -609,7 +609,7 @@ const char* op_progress_prefix(OpTag op) {
 }
 
 }  // namespace (anonymous) — encrypt/decrypt/list orchestrators are lifted
-   // into the public `lock` namespace via <lock/cli_dispatch.hpp> so the TUI
+   // into the public `ae_locker` namespace via <ae-locker/cli_dispatch.hpp> so the TUI
    // can share them; the helpers above stay internal.
 
 // ---------------------------------------------------------------------------
@@ -733,7 +733,7 @@ ExitCode run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
         tracker.start(input_files.size());
     }
 
-    lock::memory_status ms = lock::detect_memory();
+    ae_locker::memory_status ms = ae_locker::detect_memory();
     unsigned hw = std::thread::hardware_concurrency();
     if (hw == 0u) {
         hw = 1u;
@@ -751,7 +751,7 @@ ExitCode run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
 
         size_t file_size = static_cast<size_t>(
             std::filesystem::file_size(input));
-        size_t cs = lock::recommend_chunk_size(
+        size_t cs = ae_locker::recommend_chunk_size(
             ms.available_bytes,
             args.chunk_size_explicit ? static_cast<size_t>(args.chunk_size) : 0u,
             file_size);
@@ -760,7 +760,7 @@ ExitCode run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
                 ? UINT32_MAX
                 : static_cast<uint32_t>(cs);
 
-        unsigned jobs = lock::recommend_jobs(
+        unsigned jobs = ae_locker::recommend_jobs(
             args.jobs_explicit ? static_cast<unsigned>(args.jobs) : 0u,
             ms.available_bytes, cs, hw);
 
@@ -816,7 +816,7 @@ ExitCode run_encrypt(const EncryptCliArgs& args, ProgressTracker& tracker) {
                     }
                     files_done.fetch_add(1, std::memory_order_relaxed);
                 } catch (const std::exception& e) {
-                    std::lock_guard<std::mutex> lock(error_mutex);
+                    std::lock_guard<std::mutex> lk(error_mutex);
                     if (!first_error) {
                         first_error = input + ": " + e.what();
                     }
@@ -922,7 +922,7 @@ ExitCode run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
         tracker.start(input_files.size());
     }
 
-    lock::memory_status ms = lock::detect_memory();
+    ae_locker::memory_status ms = ae_locker::detect_memory();
     unsigned hw = std::thread::hardware_concurrency();
     if (hw == 0u) {
         hw = 1u;
@@ -939,11 +939,11 @@ ExitCode run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
 
         size_t file_size = static_cast<size_t>(
             std::filesystem::file_size(input));
-        size_t cs = lock::recommend_chunk_size(
+        size_t cs = ae_locker::recommend_chunk_size(
             ms.available_bytes,
             args.chunk_size_explicit ? static_cast<size_t>(args.chunk_size) : 0u,
             file_size);
-        unsigned jobs = lock::recommend_jobs(
+        unsigned jobs = ae_locker::recommend_jobs(
             args.jobs_explicit ? static_cast<unsigned>(args.jobs) : 0u,
             ms.available_bytes, cs, hw);
 
@@ -1060,7 +1060,7 @@ ExitCode run_decrypt(const DecryptCliArgs& args, ProgressTracker& tracker) {
                     }
                     files_done.fetch_add(1, std::memory_order_relaxed);
                 } catch (const std::exception& e) {
-                    std::lock_guard<std::mutex> lock(error_mutex);
+                    std::lock_guard<std::mutex> lk(error_mutex);
                     if (!first_error) {
                         first_error = input + ": " + e.what();
                     }
@@ -1741,4 +1741,4 @@ int cli_main(int argc, char** argv) {
     }
 }
 
-}  // namespace lock
+}  // namespace ae_locker

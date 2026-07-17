@@ -2,13 +2,13 @@
 /build/
 /build-aarch64/
 /compile_commands.json
-/lock
+/ae-locker
 
-# Per-arch release artifacts staged under dist/arch/<arch>/lock
+# Per-arch release artifacts staged under dist/arch/<arch>/ae-locker
 /dist/
 
-# Encrypted test outputs (any local .locked file)
-*.locked
+# Encrypted test outputs (any local .ae-locked file)
+*.ae-locked
 
 # IDE / editor caches
 /.vscode/

@@ -4,9 +4,9 @@
 #include <array>
 #include <cstdint>
 #include <vector>
-#include <lock/constants.hpp>
+#include <ae-locker/constants.hpp>
 
-namespace lock {
+namespace ae_locker {
 
 struct ScryptParams {
     uint64_t N       = SCRYPT_DEFAULT_N;
@@ -31,4 +31,4 @@ struct KeyMaterial {
 // Generate a cryptographically random n bytes using OpenSSL RAND_bytes
 [[nodiscard]] std::vector<unsigned char> random_bytes(size_t n);
 
-}  // namespace lock
+}  // namespace ae_locker

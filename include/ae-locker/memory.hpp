@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace lock {
+namespace ae_locker {
 
 // Snapshot of the system memory available to the process.
 struct memory_status {
@@ -36,4 +36,4 @@ struct memory_status {
     size_t   chunk_size,
     unsigned hw_concurrency) noexcept;
 
-}  // namespace lock
+}  // namespace ae_locker

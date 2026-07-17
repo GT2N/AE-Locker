@@ -1,4 +1,4 @@
-// lock::repl — thin wrapper around GNU readline for the `lock --cli` REPL.
+// ae_locker::repl — thin wrapper around GNU readline for the `lock --cli` REPL.
 //
 // The header exposes two small entry points; src/repl.cpp owns all direct
 // linkage against libreadline (history list, completion function pointers,
@@ -12,7 +12,7 @@
 
 #include <string>
 
-namespace lock {
+namespace ae_locker {
 
 // Read one input line from the user via GNU readline. Emits `prompt`, records
 // the returned line into readline's in-memory history (skipping empty/whitespace
@@ -29,4 +29,4 @@ namespace lock {
 // No-op when libreadline is absent.
 void repl_install_completer() noexcept;
 
-}  // namespace lock
+}  // namespace ae_locker
