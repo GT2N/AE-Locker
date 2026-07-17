@@ -720,7 +720,13 @@ Str validate_decrypt_step_password(const DecryptForm& f) {
         return false;
     });
 
-    screen.Loop(app);
+    try {
+        screen.Loop(app);
+    } catch (...) {
+        std::fprintf(stderr, "\x1b[?25h\x1b[?1049l\x1b[?1003l\x1b[?1006l\x1b[0m");
+        std::fflush(stderr);
+        throw;
+    }
     return chosen;
 }
 
@@ -958,7 +964,13 @@ Disposition show_list_picker(std::vector<std::string>& out_files) {
         return false;
     });
 
-    screen.Loop(app);
+    try {
+        screen.Loop(app);
+    } catch (...) {
+        std::fprintf(stderr, "\x1b[?25h\x1b[?1049l\x1b[?1003l\x1b[?1006l\x1b[0m");
+        std::fflush(stderr);
+        throw;
+    }
     return chosen;
 }
 
@@ -1045,7 +1057,13 @@ MenuAction show_main_menu() {
         return false;
     });
 
-    screen.Loop(card);
+    try {
+        screen.Loop(card);
+    } catch (...) {
+        std::fprintf(stderr, "\x1b[?25h\x1b[?1049l\x1b[?1003l\x1b[?1006l\x1b[0m");
+        std::fflush(stderr);
+        throw;
+    }
     return action;
 }
 
