@@ -1,10 +1,30 @@
-# lock
+# AE-Locker
 
 [简体中文](README.md) | **English**
 
-`lock` is a command-line file encryption tool written in C++20. It uses **AES-256-CTR** for multi-threaded parallel encryption of file contents, **AES-256-GCM** to encrypt the original filename (making it invisible after encryption), and **HMAC-SHA256** for full-file integrity authentication. The key is derived from the user's passphrase via the **scrypt** KDF. Optional **LZ4 / zstd** compress-then-encrypt is supported: per-chunk independent compression before encryption via `--compress` / `-z` / `--fast`; during decryption the compression algorithm is auto-detected and reversed.
+`AE-Locker` is a command-line file encryption tool written in C++20. It uses **AES-256-CTR** for multi-threaded parallel encryption of file contents, **AES-256-GCM** to encrypt the original filename (making it invisible after encryption), and **HMAC-SHA256** for full-file integrity authentication. The key is derived from the user's passphrase via the **scrypt** KDF. Optional **LZ4 / zstd** compress-then-encrypt is supported: per-chunk independent compression before encryption via `--compress` / `-z` / `--fast`; during decryption the compression algorithm is auto-detected and reversed.
 
 Build toolchain: **Clang + LLD + ThinLTO + Ninja + CMake**.
+
+## Contents
+
+- [Features](#features)
+- [Build](#build)
+- [Quick Start](#quick-start)
+- [Localization (Locale / Language)](#localization-locale-language)
+- [Batch Directory Encrypt/Decrypt (\`--auto\`)](#batch-directory-encrypt-decrypt-auto)
+- [Three CLI Styles](#three-cli-styles)
+- [TUI Interface](#tui-interface)
+- [Three Password Sources](#three-password-sources)
+- [Full Options List](#full-options-list)
+- [Encrypted File Format (\`.ae-locked\`)](#encrypted-file-format-ae-locked)
+- [Encryption Design](#encryption-design)
+- [Streaming I/O & Memory Model](#streaming-i-o-memory-model)
+- [Project Structure](#project-structure)
+- [Security Notes](#security-notes)
+- [Cross-arch Artifacts (\`dist/arch/\`)](#cross-arch-artifacts-dist-arch-)
+- [Limitations](#limitations)
+- [License](#license)
 
 ## Features
 
@@ -18,7 +38,7 @@ Build toolchain: **Clang + LLD + ThinLTO + Ninja + CMake**.
 - **Progress bars**: per-file independent + overall progress (hand-written ASCII `[=====>]` renderer, no third-party dependency, in-place refresh)
 - **Multiple CLI styles**: subcommand, `-c flag`, `--cli` interactive
 - **Multiple password sources**: interactive (default), file (`-p`, requires `--no-safe`), environment variable (`--password-env-var`, requires `--no-safe`)
-- **No overwrite**: if `foo.txt.locked` already exists, encryption refuses to proceed and errors out
+- **No overwrite**: if `foo.txt.ae-locked` already exists, encryption refuses to proceed and errors out
 - **Safety guardrail**: reading passphrases from file/environment is rejected by default; requires explicit `--no-safe` confirmation
 
 ## Build
@@ -37,9 +57,9 @@ Build toolchain: **Clang + LLD + ThinLTO + Ninja + CMake**.
 
 | Preset | Target arch | Linking | Purpose |
 |---|---|---|---|
-| `default`         | host (x86_64 / aarch64) | dynamic             | Main dev path; output at `build/lock` |
+| `default`         | host (x86_64 / aarch64) | dynamic             | Main dev path; output at `build/ae-locker` |
 | `debug`           | host                    | dynamic, no ThinLTO | Debugging |
-| `aarch64-static`  | aarch64 Linux           | **fully static** (`-static-pie`, no `NEEDED`) | Cross-compile from x86_64 host; output at `build-aarch64/lock` |
+| `aarch64-static`  | aarch64 Linux           | **fully static** (`-static-pie`, no `NEEDED`) | Cross-compile from x86_64 host; output at `build-aarch64/ae-locker` |
 
 All presets share:
 
@@ -53,10 +73,10 @@ All presets share:
 
 ```bash
 sudo apt-get install -y clang lld ninja-build cmake libssl-dev libreadline-dev
-git clone <repo-url> && cd lock
+git clone <repo-url> && cd AE-Locker
 cmake --preset default       # One-time configure (first run FetchContent-fetches lz4/zstd/ftxui)
 cmake --build build          # Incremental build
-./build/lock --version
+./build/ae-locker --version
 ```
 
 `libreadline-dev` can be omitted — if CMake doesn't detect readline, it automatically degrades to the `std::getline` REPL mode (no history, no Tab completion); other features are unaffected.
@@ -69,10 +89,10 @@ On an aarch64 host, `cmake --preset default` works out of the box — clang's de
 sudo apt-get install -y clang lld ninja-build cmake libssl-dev libreadline-dev
 cmake --preset default
 cmake --build build
-./build/lock --version
+./build/ae-locker --version
 ```
 
-The output is a dynamically-linked binary, depending on the same-machine `libssl.so.3` / `libstdc++.so.6` / `libreadline.so.8` etc.; to run `lock` on another aarch64 machine with the same distro / glibc generation you'll need to `apt install` the corresponding runtime libs first (or use the cross-compiled static artifact below).
+The output is a dynamically-linked binary, depending on the same-machine `libssl.so.3` / `libstdc++.so.6` / `libreadline.so.8` etc.; to run `ae-locker` on another aarch64 machine with the same distro / glibc generation you'll need to `apt install` the corresponding runtime libs first (or use the cross-compiled static artifact below).
 
 ### Debian / Ubuntu — Cross-compile aarch64 **static** binary on x86_64 host
 
@@ -97,12 +117,12 @@ sudo apt-get install -y libc6-dev-arm64-cross g++-aarch64-linux-gnu
 sudo apt-get install -y libssl-dev:arm64 libreadline-dev:arm64 libtinfo-dev:arm64
 ```
 
-Then inside the `lock/` source tree:
+Then inside the `AE-Locker/` source tree:
 
 ```bash
 cmake --preset aarch64-static          # One-time configure
 cmake --build --preset aarch64-static  # Incremental build
-# Output at build-aarch64/lock, no NEEDED entries, scp to any standard aarch64
+# Output at build-aarch64/ae-locker, no NEEDED entries, scp to any standard aarch64
 # Linux (glibc 2.31+) and run directly — no runtime libs needed on the target
 ```
 
@@ -122,14 +142,14 @@ export Readline_ROOT=/opt/homebrew/opt/readline
 
 cmake --preset default
 cmake --build build
-./build/lock --version
+./build/ae-locker --version
 ```
 
 > The macOS path **has not been tested yet**. ThinLTO + LLD occasionally conflicts with macOS code signing / notarization. If you hit LLD link issues, you can `-DENABLE_THINLTO=OFF` to disable ThinLTO and set `CMAKE_LINKER_TYPE` to `ld64` (or let CMake auto-fallback to the Apple linker).
 
 ### Termux on Android — on-device compile
 
-Termux is the **only viable path** to run `lock` on Android: compile directly inside Termux with its bundled clang. Termux clang's default target is `aarch64-linux-android` (Bionic libc); the resulting binary is Bionic-native and runs directly inside Termux. The `dist/arch/aarch64/lock` static artifact (glibc) **cannot** be used in Termux — see "Unsupported platforms — Termux / Android" below.
+Termux is the **only viable path** to run `AE-Locker` on Android: compile directly inside Termux with its bundled clang. Termux clang's default target is `aarch64-linux-android` (Bionic libc); the resulting binary is Bionic-native and runs directly inside Termux. The `dist/arch/aarch64/ae-locker` static artifact (glibc) **cannot** be used in Termux — see "Unsupported platforms — Termux / Android" below.
 
 ```bash
 # Inside Termux (any 64-bit Android device):
@@ -147,7 +167,7 @@ cmake -B build -G Ninja \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 cmake --build build
-./build/lock --version
+./build/ae-locker --version
 ```
 
 > The Termux on-device compile path **has not been tested yet**. Known risk points:
@@ -168,26 +188,26 @@ cmake --build build
 
 ```bash
 # Encrypt (interactive passphrase prompt)
-./build/lock encrypt secret.txt
-# → secret.txt.locked
+./build/ae-locker encrypt secret.txt
+# → secret.txt.ae-locked
 
 # Decrypt (same passphrase)
-./build/lock decrypt secret.txt.locked -o ./out/
+./build/ae-locker decrypt secret.txt.ae-locked -o ./out/
 # → ./out/secret.txt  (filename restored from header)
 
 # View file metadata without decryption
-./build/lock list secret.txt.locked
+./build/ae-locker list secret.txt.ae-locked
 ```
 
 Multi-file parallel encryption:
 
 ```bash
-./build/lock encrypt a.txt b.txt c.txt -j 8
+./build/ae-locker encrypt a.txt b.txt c.txt -j 8
 ```
 
 ## Localization (Locale / Language)
 
-`lock` ships with built-in English/Chinese bilingual support. Language is auto-detected by the following priority; `--lang` overrides explicitly. No third-party i18n library dependency.
+`AE-Locker` ships with built-in English/Chinese bilingual support. Language is auto-detected by the following priority; `--lang` overrides explicitly. No third-party i18n library dependency.
 
 | Priority | Source | Notes |
 |:---:|:---|:---|
@@ -211,19 +231,19 @@ Color output (error prefixes, progress bar fill, password prompts etc.) respects
 
 ```bash
 # Chinese localization (CLI prompts, help, progress, error messages)
-./build/lock --lang zh encrypt secret.txt
+./build/ae-locker --lang zh encrypt secret.txt
 
 # Affects only this run via env var routing
-LC_ALL=zh_CN.UTF-8 ./build/lock encrypt secret.txt
+LC_ALL=zh_CN.UTF-8 ./build/ae-locker encrypt secret.txt
 
 # Show language detection trace
-./build/lock encrypt secret.txt -v
+./build/ae-locker encrypt secret.txt -v
 
 # Disable colors and cursor ANSI
-./build/lock --no-color encrypt secret.txt -o ./out/
+./build/ae-locker --no-color encrypt secret.txt -o ./out/
 
 # Pipe mode: auto-detects if stdin is a tty; non-tty doesn't disable echo
-printf 'pw\npw\n' | ./build/lock encrypt secret.txt
+printf 'pw\npw\n' | ./build/ae-locker encrypt secret.txt
 ```
 
 ### Exit Code Table
@@ -234,11 +254,11 @@ printf 'pw\npw\n' | ./build/lock encrypt secret.txt
 |:---:|:---|:---|
 | 0 | Success (Ok) | encrypt/decrypt/list completed normally |
 | 2 | Argument error (Arg) | Unknown command / missing flag value / unsupported flag value (`--lang fr` / `--compress bogus` etc.) / password mismatch, empty password / no encryptable files / no input files / `--max-depth` used without `--auto` / `--auto` directory doesn't exist |
-| 3 | I/O error / input file already exists (Io) | Target `.locked` file already exists (no-overwrite guard) / directory creation failed / file unreadable |
+| 3 | I/O error / input file already exists (Io) | Target `.ae-locked` file already exists (no-overwrite guard) / directory creation failed / file unreadable |
 | 4 | Key derivation / auth failure (Auth) | Wrong password on decrypt (HMAC verification failed / file tampered / salt mismatch) |
 | 5 | Internal unrecoverable error (Internal) | Exception reaches `cli_main` top-level catch |
 
-The `lock list` subcommand returns 0 even for inputs that are "not `.locked` files" (just prints a note), so scripts can aggregate the success/failure of other subcommands via exit codes.
+The `ae-locker list` subcommand returns 0 even for inputs that are "not `.ae-locked` files" (just prints a note), so scripts can aggregate the success/failure of other subcommands via exit codes.
 
 ## Batch Directory Encrypt/Decrypt (`--auto`)
 
@@ -246,21 +266,21 @@ The `lock list` subcommand returns 0 even for inputs that are "not `.locked` fil
 
 ```bash
 # Recursively encrypt all files under ./secrets into ./encrypted, mirroring source structure
-./build/lock encrypt --auto ./secrets --max-depth 3 -o ./encrypted
+./build/ae-locker encrypt --auto ./secrets --max-depth 3 -o ./encrypted
 
-# Recursively decrypt: scan ./encrypted/*.locked, use filename restored from header
+# Recursively decrypt: scan ./encrypted/*.ae-locked, use filename restored from header
 # as the output filename, mirror subdir structure into ./decrypted
-./build/lock decrypt --auto ./encrypted -o ./decrypted
+./build/ae-locker decrypt --auto ./encrypted -o ./decrypted
 ```
 
 Conventions:
 
 - `--auto <dir>`: recursively scan this directory. `-o/--output-dir` **must** be explicitly given as the output root for mirroring source subdir structure.
 - `--max-depth <N>`: recursion depth control. `-1` = unlimited (default); `0` = only direct files inside the `--auto` directory; `1` = current level + one level of subdirectories; and so on.
-- encrypt: skips `.locked`-suffixed files (prevents self-re-encrypting its own artifacts); only processes regular files.
-- decrypt: only processes `.locked`-suffixed regular files; restores the original filename from the header as the output filename.
+- encrypt: skips `.ae-locked`-suffixed files (prevents self-re-encrypting its own artifacts); only processes regular files.
+- decrypt: only processes `.ae-locked`-suffixed regular files; restores the original filename from the header as the output filename.
 - skips symlinks (prevents cycle attacks); skips non-regular files (socket/device/fifo).
-- Output lands at `-o` as `[source relative path].locked` (encrypt) / `[source relative subdir]/[header-restored filename]` (decrypt), same "exists → refuse" (no overwrite) rule as single-file mode.
+- Output lands at `-o` as `[source relative path].ae-locked` (encrypt) / `[source relative subdir]/[header-restored filename]` (decrypt), same "exists → refuse" (no overwrite) rule as single-file mode.
 - `--auto` and positional file args are mutually exclusive; only one can be given. `--max-depth` alone (without `--auto`) errors out.
 - An empty directory (no encryptable/decryptable files) errors with "no eligible files found" (not a silent success).
 
@@ -268,32 +288,32 @@ Conventions:
 
 | Style | Command |
 |---|---|
-| **Subcommand (default)** | `lock encrypt <file> [options]` |
-| **flag form** | `lock -c encrypt <file> [options]` |
-| **Interactive** | `lock --cli` (enters REPL, supports `encrypt` / `decrypt` / `list` / `quit`, plus in-REPL help commands `help` / `?` / `h`) |
+| **Subcommand (default)** | `ae-locker encrypt <file> [options]` |
+| **flag form** | `ae-locker -c encrypt <file> [options]` |
+| **Interactive** | `ae-locker --cli` (enters REPL, supports `encrypt` / `decrypt` / `list` / `quit`, plus in-REPL help commands `help` / `?` / `h`) |
 
 ### Per-subcommand `--help` / `-h`
 
-`lock --help` prints the overview; appending `--help` (or `-h`) after any subcommand prints only that subcommand's summary, relevant options and examples, and returns immediately with exit code 0 (does NOT actually execute encrypt/decrypt/list even if other args are present):
+`ae-locker --help` prints the overview; appending `--help` (or `-h`) after any subcommand prints only that subcommand's summary, relevant options and examples, and returns immediately with exit code 0 (does NOT actually execute encrypt/decrypt/list even if other args are present):
 
 ```bash
-lock encrypt --help    # encrypt subcommand-specific help (EN)
-lock decrypt --help    # decrypt subcommand-specific help
-lock list --help       # list subcommand-specific help
-lock encrypt -h        # Identical to --help
-lock --lang zh encrypt --help   # Chinese version of encrypt help
-lock encrypt foo.txt --help -o out -z   # --help short-circuits, no encryption, exit 0
+ae-locker encrypt --help    # encrypt subcommand-specific help (EN)
+ae-locker decrypt --help    # decrypt subcommand-specific help
+ae-locker list --help       # list subcommand-specific help
+ae-locker encrypt -h        # Identical to --help
+ae-locker --lang zh encrypt --help   # Chinese version of encrypt help
+ae-locker encrypt foo.txt --help -o out -z   # --help short-circuits, no encryption, exit 0
 ```
 
-`lock help encrypt` does **not** exist — top-level `help` is still an unknown command (exit 2); only available inside the `--cli` REPL.
+`ae-locker help encrypt` does **not** exist — top-level `help` is still an unknown command (exit 2); only available inside the `--cli` REPL.
 
 ### `--cli` REPL in-REPL help commands
 
-Inside `lock --cli`, the REPL accepts additional help commands (only inside the REPL, not exposed as executable subcommands):
+Inside `ae-locker --cli`, the REPL accepts additional help commands (only inside the REPL, not exposed as executable subcommands):
 
 | Command | Behavior |
 |---|---|
-| `help` / `?` / `h` | Prints the same overall help as `lock --help` to STDOUT |
+| `help` / `?` / `h` | Prints the same overall help as `ae-locker --help` to STDOUT |
 | `help encrypt` / `? encrypt` / `h decrypt` / `? list` etc. | Prints the corresponding subcommand's specific help to STDOUT |
 | `help bogus` (or any topic other than encrypt/decrypt/list) | Prints a localized "unknown help topic" error to STDERR; REPL does **not** exit and re-prompts |
 
@@ -301,7 +321,7 @@ The REPL prints a short hint to STDERR on startup, telling the user `help` / `?`
 
 ### `--cli` REPL readline support
 
-`lock --cli` probes for GNU readline + libtinfo at compile time as an optional link dependency; when both are available the REPL is driven by readline, providing:
+`ae-locker --cli` probes for GNU readline + libtinfo at compile time as an optional link dependency; when both are available the REPL is driven by readline, providing:
 
 - **Line editing**: ←/→/Home/End within-word movement, Ctrl-A / Ctrl-E, Backspace/Delete at cursor position.
 - **History**: ↑/↓ to browse current-process input history (non-empty lines only enter history; empty/whitespace-only do not).
@@ -321,73 +341,73 @@ When completing a `--xxx=value` token, it strips to `--xxx` then does prefix fil
 
 #### Compile-time dependency detection
 
-`CMakeLists.txt` probes via `find_library(Readline_LIBRARY NAMES readline)` + `find_path(Readline_INCLUDE_DIR NAMES readline/readline.h)`; when both hit, it sets the cache var `LOCK_HAVE_READLINE=ON`, and exposes:
+`CMakeLists.txt` probes via `find_library(Readline_LIBRARY NAMES readline)` + `find_path(Readline_INCLUDE_DIR NAMES readline/readline.h)`; when both hit, it sets the cache var `AE_LOCKER_HAVE_READLINE=ON`, and exposes:
 
-- `-DLOCK_HAVE_READLINE=1` to all lock TUs;
-- `${Readline_LIBRARY}` (plus `${Readline_TINFO_LIBRARY}` when found, to prevent `-Wl,--as-needed` from dropping the transitive dep under ThinLTO) into `target_link_libraries(lock PRIVATE ...)`.
+- `-DAE_LOCKER_HAVE_READLINE=1` to all AE-Locker TUs;
+- `${Readline_LIBRARY}` (plus `${Readline_TINFO_LIBRARY}` when found, to prevent `-Wl,--as-needed` from dropping the transitive dep under ThinLTO) into `target_link_libraries(ae-locker PRIVATE ...)`.
 
-readline is not REQUIRED; if any one is missing it degrades: `LOCK_HAVE_READLINE=OFF`, build links `0`, `cli.cpp`'s `#if LOCK_HAVE_READLINE` branch follows the `std::getline` path, and on REPL startup prints a one-line `[repl] readline not found at build time — using line mode (no history, no Tab completion)` to STDERR (localized: Chinese build environments display the corresponding Chinese). The REPL has zero readline.h dependency — `include/lock/repl.hpp` doesn't proxy `readline.h`, only exposes two entry points: `repl_readline(prompt, out)` and `repl_install_completer()`; `src/repl.cpp` internally does `extern "C" { #include <readline/readline.h> #include <readline/history.h> }`.
+readline is not REQUIRED; if any one is missing it degrades: `AE_LOCKER_HAVE_READLINE=OFF`, build links `0`, `cli.cpp`'s `#if AE_LOCKER_HAVE_READLINE` branch follows the `std::getline` path, and on REPL startup prints a one-line `[repl] readline not found at build time — using line mode (no history, no Tab completion)` to STDERR (localized: Chinese build environments display the corresponding Chinese). The REPL has zero readline.h dependency — `include/ae-locker/repl.hpp` doesn't proxy `readline.h`, only exposes two entry points: `repl_readline(prompt, out)` and `repl_install_completer()`; `src/repl.cpp` internally does `extern "C" { #include <readline/readline.h> #include <readline/history.h> }`.
 
-After build, `ldd build/lock | grep readline` in an environment where libreadline was detected shows `libreadline.so.8` and `libtinfo.so.6`.
+After build, `ldd build/ae-locker | grep readline` in an environment where libreadline was detected shows `libreadline.so.8` and `libtinfo.so.6`.
 
 ### Shell tab-completion
 
-`lock --completion <shell>` generates, at runtime based on the CLI's known flag set, a shell completion script ready to `eval` / source, writes it to stdout, and exits with code 0. Supports bash, zsh, and fish; the script is assembled in-memory by the `lock` binary via pure C++ string concatenation — no external sub-process, no network request, no third-party completion library. The script text is fixed English (doesn't change with `--lang`) because the script is parsed by the shell, not read line-by-line by the end user.
+`ae-locker --completion <shell>` generates, at runtime based on the CLI's known flag set, a shell completion script ready to `eval` / source, writes it to stdout, and exits with code 0. Supports bash, zsh, and fish; the script is assembled in-memory by the `ae-locker` binary via pure C++ string concatenation — no external sub-process, no network request, no third-party completion library. The script text is fixed English (doesn't change with `--lang`) because the script is parsed by the shell, not read line-by-line by the end user.
 
 To enable:
 
 ```bash
 # bash — add to ~/.bashrc:
-eval "$(lock --completion bash)"
+eval "$(ae-locker --completion bash)"
 
 # zsh: first ensure completion is enabled (usually already in .zshrc:
 #      autoload -Uz compinit && compinit)
-eval "$(lock --completion zsh)"
-# Or copy the script to any fpath dir named _lock (command name + underscore prefix):
-#   lock --completion zsh > ~/.zsh/_lock
+eval "$(ae-locker --completion zsh)"
+# Or copy the script to any fpath dir named _ae-locker (command name + underscore prefix):
+#   ae-locker --completion zsh > ~/.zsh/_ae-locker
 #   fpath=(~/.zsh $fpath); autoload -Uz compinit && compinit
 
 # fish: can source directly
-lock --completion fish | source
+ae-locker --completion fish | source
 ```
 
 Completion coverage:
 
-- Subcommand names `encrypt` / `decrypt` / `list` auto-complete after `lock `.
-- Each subcommand's short/long flags (e.g. `lock encrypt -<TAB>`, `lock decrypt --<TAB>`).
+- Subcommand names `encrypt` / `decrypt` / `list` auto-complete after `ae-locker `.
+- Each subcommand's short/long flags (e.g. `ae-locker encrypt -<TAB>`, `ae-locker decrypt --<TAB>`).
 - `--compress <TAB>` completes `none` / `lz4` / `zstd`; `--lang <TAB>` completes `en` / `zh`.
 - `-p` / `--password-file` completes files; `-o` / `--output-dir` / `--auto` completes directories; positional args fall through to the shell's default file completion.
 - `list` subcommand **does not** complete `--compress` / `-z` / `--fast` / `--level` / `--auto` / `--max-depth` (encrypt-only flags).
 
-`--completion` also accepts the `=` form: `lock --completion=bash` behaves identically to the space form. `--lang` / `--no-color` appearing before `--completion` are recognized (error messages localized to the selected language), but the script body is unaffected. Unrecognized shell names return non-zero exit code 2 and print a localized error to STDERR; stdout has no half-script:
+`--completion` also accepts the `=` form: `ae-locker --completion=bash` behaves identically to the space form. `--lang` / `--no-color` appearing before `--completion` are recognized (error messages localized to the selected language), but the script body is unaffected. Unrecognized shell names return non-zero exit code 2 and print a localized error to STDERR; stdout has no half-script:
 
 ```bash
-$ lock --completion bogus; echo "rc=$?"
+$ ae-locker --completion bogus; echo "rc=$?"
 error: unsupported shell 'bogus' (choose: bash, zsh, fish)
 rc=2
-$ lock --completion; echo "rc=$?"
+$ ae-locker --completion; echo "rc=$?"
 error: missing shell argument (use: bash|zsh|fish)
 rc=2
 ```
 
-If you use `make install` (CMake's `install` target), the build system invokes the freshly installed `lock` binary to generate the three scripts into the standard vendor paths under `${CMAKE_INSTALL_DATADIR}`:
+If you use `make install` (CMake's `install` target), the build system invokes the freshly installed `ae-locker` binary to generate the three scripts into the standard vendor paths under `${CMAKE_INSTALL_DATADIR}`:
 
 | Shell | Install path |
 |---|---|
-| bash  | `${datadir}/bash-completion/completions/lock`               |
-| zsh   | `${datadir}/zsh/site-functions/_lock`                       |
-| fish  | `${datadir}/fish/vendor_completions.d/lock.fish`            |
+| bash  | `${datadir}/bash-completion/completions/ae-locker`               |
+| zsh   | `${datadir}/zsh/site-functions/_ae-locker`                       |
+| fish  | `${datadir}/fish/vendor_completions.d/ae-locker.fish`            |
 
 So no `eval` is needed — the corresponding shell auto-loads them. The source tree doesn't keep any generated artifacts; installed scripts always reflect the current binary's actual flag topology.
 
 ## TUI Interface
 
-`lock --tui` launches a full-screen terminal interface based on ftxui, providing menu-driven encrypt/decrypt flows.
+`ae-locker --tui` launches a full-screen terminal interface based on ftxui, providing menu-driven encrypt/decrypt flows.
 
 ```bash
-lock --tui                # Launch TUI (Chinese or English depends on language detection)
-lock --lang zh --tui      # Force Chinese-localized TUI
-lock --lang en --tui      # Force English TUI
+ae-locker --tui                # Launch TUI (Chinese or English depends on language detection)
+ae-locker --lang zh --tui      # Force Chinese-localized TUI
+ae-locker --lang en --tui      # Force English TUI
 ```
 
 ### TUI Guard Conditions
@@ -454,7 +474,7 @@ Directory prefixes always show `[ ]` or `[-]`; directories themselves cannot be 
 | Space | On a file, toggle selected/unselected |
 | Tab / Tab+Shift | Switch focus between the interaction area and the bottom button row (step 0 only intercept, see below) |
 
-"Unsafe" entries (symlinks, special files, sockets etc.) are auto-skipped; when `only_dot_locked` is true, the list shows only `.locked`-suffixed regular files, narrowing the candidate set for the decrypt wizard / List picker.
+"Unsafe" entries (symlinks, special files, sockets etc.) are auto-skipped; when `only_dot_ae_locked` is true, the list shows only `.ae-locked`-suffixed regular files, narrowing the candidate set for the decrypt wizard / List picker.
 
 ### Tab Focus Interception (step 0)
 
@@ -489,7 +509,7 @@ After all pass, pressing "Finish" makes the wizard return to the main menu while
 
 | Step | Title | Fields |
 |---|---|---|
-| 1/3 | Select .locked files | File browser (lists only `.locked` regular files) |
+| 1/3 | Select .ae-locked files | File browser (lists only `.ae-locked` regular files) |
 | 2/3 | Output & concurrency | Output dir Input; concurrency Input (0 = auto-recommended) |
 | 3/3 | Password | Password Input (hidden) (decrypt has no confirm-password field) |
 
@@ -497,7 +517,7 @@ Validation:
 
 | Step | Validation |
 |---|---|
-| 1 | At least one `.locked` file selected |
+| 1 | At least one `.ae-locked` file selected |
 | 2 | None |
 | 3 | Password non-empty |
 
@@ -505,7 +525,7 @@ Post-completion flow is identical to Encrypt: exit alt-screen → `run_decrypt` 
 
 ### List Picker
 
-"List" is no longer a placeholder card: it opens an independent file browser (lists only `.locked` files); the bottom "List" button executes `run_list` to print metadata; the "Cancel" button returns to the main menu. Esc inside the picker also returns to the main menu.
+"List" is no longer a placeholder card: it opens an independent file browser (lists only `.ae-locked` files); the bottom "List" button executes `run_list` to print metadata; the "Cancel" button returns to the main menu. Esc inside the picker also returns to the main menu.
 
 ### Password Handling
 
@@ -523,15 +543,15 @@ ftxui's `Input` component, with `password=true` set, hides character display —
 
 ### Cross-platform & Dependencies
 
-ftxui is auto-fetched via CMake FetchContent, same as lz4 and zstd. First `cmake --preset default` downloads ftxui source from GitHub and compiles it as a static lib, statically linked with `lock`. `lock --tui` is only available on platforms with POSIX termios (Linux / macOS).
+ftxui is auto-fetched via CMake FetchContent, same as lz4 and zstd. First `cmake --preset default` downloads ftxui source from GitHub and compiles it as a static lib, statically linked with `ae-locker`. `ae-locker --tui` is only available on platforms with POSIX termios (Linux / macOS).
 
 ## Three Password Sources
 
 | Mode | Usage | Safety guardrail |
 |---|---|---|
-| Interactive (default) | `lock encrypt foo.txt`, then prompt | None (safe) |
-| File | `lock encrypt -p ./pw.txt --no-safe foo.txt` | **requires** `--no-safe` |
-| Env var | `LOCK_PASSWORD=xxx lock encrypt --password-env-var --no-safe foo.txt` | **requires** `--no-safe` |
+| Interactive (default) | `ae-locker encrypt foo.txt`, then prompt | None (safe) |
+| File | `ae-locker encrypt -p ./pw.txt --no-safe foo.txt` | **requires** `--no-safe` |
+| Env var | `LOCK_PASSWORD=xxx ae-locker encrypt --password-env-var --no-safe foo.txt` | **requires** `--no-safe` |
 
 `--password-env-var` can be abbreviated as `-pev`.
 
@@ -541,9 +561,9 @@ Without `--no-safe`, reading passwords from file/env is rejected with an error, 
 
 ```
 Commands:
-  encrypt    encrypt one or more files into .locked containers
-  decrypt    decrypt one or more .locked containers
-  list       print .locked container metadata (no decryption)
+  encrypt    encrypt one or more files into .ae-locked containers
+  decrypt    decrypt one or more .ae-locked containers
+  list       print .ae-locked container metadata (no decryption)
 
 Options:
   -p, --password-file <path>   read passphrase from file (requires --no-safe)
@@ -564,7 +584,7 @@ Options:
   -h, --help                    print help
 ```
 
-## Encrypted File Format (`.locked`)
+## Encrypted File Format (`.ae-locked`)
 
 ```
 +────────────────+──────────────────────────────────────+
@@ -745,7 +765,7 @@ The decrypt temp file is named `<output>.lockdec.tmp`, in the same dir as the fi
 ├── cmake/
 │   └── aarch64-linux-gnu.cmake  # aarch64 cross toolchain (-static-pie, multiarch .a)
 ├── .clang-format
-├── include/lock/
+├── include/ae-locker/
 │   ├── constants.hpp        # file format constants, scrypt default params
 │   ├── endian.hpp           # big-endian load/store helpers
 │   ├── errors.hpp           # ExitCode enum + custom exception classes
@@ -764,7 +784,7 @@ The decrypt temp file is named `<output>.lockdec.tmp`, in the same dir as the fi
 │   ├── repl.hpp            # `--cli` REPL entry (readline / getline fallback)
 │   └── tui.hpp             # `--tui` entry (ftxui wizard / file browser)
 ├── src/
-│   ├── main.cpp             # 1-line delegate: `return lock::cli_main(argc, argv);`
+│   ├── main.cpp             # 1-line delegate: `return ae_locker::cli_main(argc, argv);`
 │   ├── kdf.cpp              # scrypt via EVP_KDF (OpenSSL 3.x)
 │   ├── crypto.cpp           # AES-256-CTR parallel + AES-256-GCM filename
 │   ├── compress.cpp         # LZ4/zstd block-API compression wrapper
@@ -781,7 +801,7 @@ The decrypt temp file is named `<output>.lockdec.tmp`, in the same dir as the fi
 │   └── tui.cpp              # ftxui main menu + multi-step wizard + file browser
 ├── scripts/
 │   └── smoke-tui.sh         # TUI smoke test (8 steps)
-├── dist/arch/{x86_64,aarch64}/lock  # artifact copies (gitignore the binary; keep dir placeholders)
+├── dist/arch/{x86_64,aarch64}/ae-locker  # artifact copies (gitignore the binary; keep dir placeholders)
 ├── build/                   # default preset output (gitignore)
 └── build-aarch64/           # aarch64-static preset output (gitignore)
 ```
@@ -796,13 +816,13 @@ The decrypt temp file is named `<output>.lockdec.tmp`, in the same dir as the fi
 
 ## Cross-arch Artifacts (`dist/arch/`)
 
-Cross-compile a **single static-pie binary** for aarch64 Linux on an x86_64 host via `cmake --preset aarch64-static`. Both architectures' artifacts can coexist at `dist/arch/<arch>/lock`:
+Cross-compile a **single static-pie binary** for aarch64 Linux on an x86_64 host via `cmake --preset aarch64-static`. Both architectures' artifacts can coexist at `dist/arch/<arch>/ae-locker`:
 
 ```
 dist/
 └── arch/
-    ├── x86_64/lock        ← output of cmake --preset default (dynamic)
-    └── aarch64/lock       ← output of cmake --preset aarch64-static (full static)
+    ├── x86_64/ae-locker        ← output of cmake --preset default (dynamic)
+    └── aarch64/ae-locker       ← output of cmake --preset aarch64-static (full static)
 ```
 
 | Arch | Preset | Linking | Size | Runtime deps |
@@ -821,15 +841,15 @@ dist/
 
 ### Unsupported Platforms — Termux / Android
 
-`dist/arch/aarch64/lock` **cannot run on Termux / Android**. This is not a toolchain-parameter limitation but a fundamental architecture mismatch between glibc and Bionic:
+`dist/arch/aarch64/ae-locker` **cannot run on Termux / Android**. This is not a toolchain-parameter limitation but a fundamental architecture mismatch between glibc and Bionic:
 
 1. Our arm64 binary statically links **glibc**; its `_start` calls glibc's `__libc_start_main` bootstrap (application of RELA relocations, TLS initialization, running preinit arrays, etc.).
 2. Android since 5.0 routes `e_type=DYN` (PIE) binaries to Bionic's `linker64`. `linker64` does the same execution-environment setup before jumping to `_start` (applies RELA relocations itself, initializes Bionic TLS, runs `DT_INIT_ARRAY` constructors).
-3. Then `linker64` jumps to the binary's `_start`; glibc's bootstrap does a second round of relocations / TLS initialization, conflicting with Bionic's already-done state → the process immediately segfaults (in user scenarios `lock --help` segfaults directly with no error message).
+3. Then `linker64` jumps to the binary's `_start`; glibc's bootstrap does a second round of relocations / TLS initialization, conflicting with Bionic's already-done state → the process immediately segfaults (in user scenarios `ae-locker --help` segfaults directly with no error message).
 
 Earlier work to make the binary pass Bionic's two hard boundary checks (commit `9cd5813`'s `-static-pie` to set e_type=DYN; commit `3bbf66e`'s alignas(64) thread_local dummy variable to bump PT_TLS p_align to 64) resolved Bionic's "PIE-only" and "TLS alignment 64" rejections, but not the subsequent glibc/Bionic dual-libc mutual exclusion.
 
-To run `lock` on Termux/Android, you'd need to cross-build a native Bionic binary using the Android NDK, or compile directly inside Termux with `clang++` — both are separate build paths not included in the current presets.
+To run `AE-Locker` on Termux/Android, you'd need to cross-build a native Bionic binary using the Android NDK, or compile directly inside Termux with `clang++` — both are separate build paths not included in the current presets.
 
 ## Limitations
 
@@ -838,4 +858,14 @@ To run `lock` on Termux/Android, you'd need to cross-build a native Bionic binar
 - v2 format is production-ready; v1 files are read-only compatible (auto-normalized by HeaderReader); the write path always outputs v2
 - Compression ratio leaks some file info (type/entropy); for highly sensitive scenarios use `--compress none`
 - Only Linux/macOS tested (depends on POSIX termios)
-- The aarch64 cross-compile artifact (`dist/arch/aarch64/lock`) supports standard glibc aarch64 Linux; does not support Termux / Android (glibc and Bionic dual-libc cannot coexist — see "Unsupported platforms" above)
+- The aarch64 cross-compile artifact (`dist/arch/aarch64/ae-locker`) supports standard glibc aarch64 Linux; does not support Termux / Android (glibc and Bionic dual-libc cannot coexist — see "Unsupported platforms" above)
+
+## License
+
+AE-Locker is licensed under [GPLv3+](LICENSE). See the [LICENSE](LICENSE) file in the repository root for the full text.
+
+- Crypto: AES-256-CTR / AES-256-GCM / HMAC-SHA256 (OpenSSL, Apache-2.0)
+- Compression: LZ4 (BSD-2-Clause) / zstd (GPLv2+BSD dual)
+- TUI: ftxui (MIT)
+- Readline: GPLv3+
+- All above dependencies are GPLv3+ compatible.
